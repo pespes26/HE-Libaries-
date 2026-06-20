@@ -1,12 +1,12 @@
-# Bar's Design Signature — dark mode (technical/developer tool default).
-# Warm-neutral, teal-tinted palette; fonts + pills + mono details are added via injected
-# CSS in app/streamlit_app.py (Streamlit's built-in theme cannot set custom fonts).
+# Bar's Design Signature — light mode (warm sand).
+# Warm-neutral palette with teal accent; fonts + pills + mono details + motion are added
+# via injected CSS in app/streamlit_app.py (Streamlit's built-in theme cannot set fonts).
 [theme]
-base = "dark"
-primaryColor = "#00857F"            # accent (teal)
-backgroundColor = "#0C1412"         # page background
-secondaryBackgroundColor = "#131E1C" # surface 1 (cards, sidebar, widgets)
-textColor = "#e8e2da"               # text primary
+base = "light"
+primaryColor = "#00A19B"            # accent (teal)
+backgroundColor = "#E4DDD3"         # page background (warm sand)
+secondaryBackgroundColor = "#F0EBE3" # surface 1 (cards, sidebar, widgets)
+textColor = "#1a1814"               # text primary
 font = "sans serif"
 
 [browser]

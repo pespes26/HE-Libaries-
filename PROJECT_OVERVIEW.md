@@ -187,9 +187,10 @@ approximate-decryption leakage caveat (Li–Micciancio 2021), mitigated by noise
    HE doesn't" workflow comparison.
 
 The app reuses the exact same `he_benchmark` modules as the benchmark, so live results match
-the measured pipeline. It is styled with a dark "design signature" (Ubuntu/Ubuntu Mono, pill
-buttons, border-depth) and crisp, accessibility-aware CSS motion (press feedback, focus
-rings, reduced-motion support).
+the measured pipeline. Charts are themed Plotly figures. It is styled with a light warm-sand
+"design signature" (Ubuntu/Ubuntu Mono, pill buttons, layered surfaces) and an
+accessibility-aware CSS motion layer (staggered card/chart entrance, hover lift, press
+feedback, focus rings, reduced-motion support).
 
 ---
 

@@ -35,33 +35,41 @@ from he_benchmark import security  # noqa: E402
 
 st.set_page_config(page_title="Benchmarking Homomorphic Encryption", layout="wide")
 
-# --- Bar's Design Signature (dark) + Emil Kowalski's motion craft.
-#     Signature = Ubuntu fonts, pill buttons, mono technical labels, border-based depth.
-#     Motion    = crisp & minimal: custom ease-out, <200ms, transform/opacity only, press
-#                 feedback, focus rings, a subtle opacity-led entrance, reduced-motion safe.
+# --- Bar's Design Signature (LIGHT, warm sand) + a richer motion layer.
+#     Signature = Ubuntu fonts, pill buttons, mono technical labels, layered surfaces.
+#     Motion    = lively but coherent: staggered card/chart entrance, hover lift + soft
+#                 shadow, press feedback, focus rings, animated tabs. transform/opacity
+#                 only (GPU); fully disabled under prefers-reduced-motion.
 #     Base palette comes from .streamlit/config.toml. ---
 _DESIGN_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&family=Ubuntu+Mono:wght@400;700&display=swap');
 
 :root {
-  --bg:#0C1412; --s1:#131E1C; --s2:#1A2826; --b1:#1E2E2C; --b2:#2a3e3c;
-  --tp:#e8e2da; --ts:#7a8f8d; --tm:#3d5452;
-  --accent:#00857F; --accent-bd:rgba(0,133,127,0.40);
-  /* Motion tokens (Emil): strong custom ease-out; never ease-in; fast durations */
+  /* Light / warm-sand palette */
+  --bg:#E4DDD3; --s1:#F0EBE3; --s2:#E9E2D8; --s3:#DDD5C9; --b1:#D4CCC0; --b2:#C0B8AA;
+  --tp:#1a1814; --ts:#5c574e; --tm:#9c9589;
+  --accent:#00A19B; --accent-bd:rgba(0,161,155,0.45);
+  /* Motion tokens: strong custom ease-out; never ease-in */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
-  --d-fast: 120ms; --d: 160ms;
+  --d-fast: 120ms; --d: 180ms; --d-slow: 340ms;
+  --shadow: 0 2px 12px rgba(0,0,0,0.10);
+  --shadow-lg: 0 8px 28px rgba(0,0,0,0.14);
 }
 
 /* Base font: Ubuntu everywhere */
 html, body, .stApp, [data-testid="stAppViewContainer"], [class*="css"] {
   font-family:'Ubuntu', ui-sans-serif, system-ui, sans-serif;
 }
-h1,h2,h3,h4 { font-family:'Ubuntu', sans-serif; letter-spacing:-0.01em; font-weight:500; }
+h1,h2,h3,h4 { font-family:'Ubuntu', sans-serif; letter-spacing:-0.01em; font-weight:500; color:var(--tp); }
 h1 { font-weight:700; }
-/* Section hierarchy: a quiet divider under headers */
-h2, h3 { padding-bottom:6px; border-bottom:1px solid var(--b1); }
+/* Section headers: accent tick + quiet divider, animated in */
+h2, h3 {
+  padding:2px 0 6px 12px; border-bottom:1px solid var(--b1);
+  border-left:3px solid var(--accent); margin-left:-12px; padding-left:12px;
+  animation: slideIn var(--d-slow) var(--ease-out) both;
+}
 
 /* Technical content -> Ubuntu Mono */
 code, kbd, pre, samp { font-family:'Ubuntu Mono', ui-monospace, monospace !important; }
@@ -69,75 +77,107 @@ code, kbd, pre, samp { font-family:'Ubuntu Mono', ui-monospace, monospace !impor
 /* Captions read as technical labels: mono, muted */
 [data-testid="stCaptionContainer"] { font-family:'Ubuntu Mono', monospace; color:var(--ts); }
 
-/* Metric: card with border depth; label is uppercase tracked mono */
+/* --- Keyframes --- */
+@keyframes fadeUp { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform:none; } }
+@keyframes riseIn { from { opacity:0; transform: translateY(12px); } to { opacity:1; transform:none; } }
+@keyframes popIn  { from { opacity:0; transform: scale(0.96); }     to { opacity:1; transform: scale(1); } }
+@keyframes slideIn{ from { opacity:0; transform: translateX(-8px); } to { opacity:1; transform:none; } }
+
+/* Page + element entrances (livelier, still opacity-led) */
+.block-container { animation: fadeUp var(--d) var(--ease-out); }
+[data-testid="stMetric"] { animation: popIn var(--d-slow) var(--ease-out) both; }
+[data-testid="stPlotlyChart"], [data-testid="stDataFrame"], [data-testid="stTable"],
+[data-testid="stExpander"] { animation: riseIn var(--d-slow) var(--ease-out) both; }
+
+/* Staggered entrance across columns in a row (e.g. the headline metric cards) */
+[data-testid="stHorizontalBlock"] > [data-testid="column"] { animation: riseIn var(--d-slow) var(--ease-out) both; }
+[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) { animation-delay: 0ms; }
+[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2) { animation-delay: 60ms; }
+[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3) { animation-delay: 120ms; }
+[data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(4) { animation-delay: 180ms; }
+
+/* Metric: card on a lighter surface; label uppercase tracked mono */
 [data-testid="stMetric"] {
-  background:var(--s1); border:1px solid var(--b1); border-radius:10px; padding:12px 16px;
-  transition: border-color var(--d) var(--ease), transform var(--d) var(--ease-out);
+  background:var(--s1); border:1px solid var(--b1); border-radius:10px; padding:14px 18px;
+  transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease),
+              border-color var(--d) var(--ease);
 }
 [data-testid="stMetricLabel"] {
   font-family:'Ubuntu Mono', monospace !important;
   text-transform:uppercase; letter-spacing:0.12em; color:var(--ts) !important;
 }
-[data-testid="stMetricValue"] { font-weight:500; letter-spacing:-0.02em; }
+[data-testid="stMetricValue"] { font-weight:500; letter-spacing:-0.02em; color:var(--tp); }
 
-/* Buttons -> pill + press feedback. Specific properties only (no `all`), custom ease-out. */
+/* Charts sit on cards (layered depth) */
+[data-testid="stPlotlyChart"] {
+  background:var(--s1); border:1px solid var(--b1); border-radius:12px; padding:8px 8px 4px;
+  transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease);
+}
+
+/* Buttons -> pill + lively press/hover. transform/opacity only. */
 .stButton > button, .stDownloadButton > button {
   border-radius:9999px !important; font-weight:500;
-  transition: transform var(--d) var(--ease-out), border-color var(--d) var(--ease),
-              background-color var(--d) var(--ease), opacity var(--d) var(--ease);
+  transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease),
+              border-color var(--d) var(--ease), background-color var(--d) var(--ease);
 }
-.stButton > button:active, .stDownloadButton > button:active { transform: scale(0.97); }
+.stButton > button:active, .stDownloadButton > button:active { transform: scale(0.96); }
 
-/* Focus-visible accent ring (feedback + accessibility) */
+/* Focus-visible accent ring */
 .stButton > button:focus-visible, .stDownloadButton > button:focus-visible,
 input:focus-visible, textarea:focus-visible, [data-baseweb="tab"]:focus-visible {
-  outline:none; box-shadow: 0 0 0 3px rgba(0,133,127,0.20);
+  outline:none; box-shadow: 0 0 0 3px rgba(0,161,155,0.22);
 }
 
-/* Tabs: smooth colour, accent on the selected tab */
+/* Tabs: animated, accent on the selected tab */
 [data-baseweb="tab-list"] { gap:4px; border-bottom:1px solid var(--b1); }
-[data-baseweb="tab"] { font-family:'Ubuntu', sans-serif; transition: color var(--d) var(--ease); }
+[data-baseweb="tab"] {
+  font-family:'Ubuntu', sans-serif;
+  transition: color var(--d) var(--ease), background-color var(--d) var(--ease),
+              transform var(--d-fast) var(--ease-out);
+  border-radius:9999px 9999px 0 0;
+}
 button[aria-selected="true"][data-baseweb="tab"] { color:var(--accent) !important; }
 
-/* Dataframes / tables: border + radius (depth via borders, not shadow) */
+/* Dataframes / tables / expander as cards */
 [data-testid="stDataFrame"], [data-testid="stTable"] {
   border:1px solid var(--b1); border-radius:10px; overflow:hidden;
 }
-
-/* Expander as a card */
 [data-testid="stExpander"] {
   border:1px solid var(--b1); border-radius:10px; background:var(--s1);
-  transition: border-color var(--d) var(--ease);
+  transition: box-shadow var(--d) var(--ease), border-color var(--d) var(--ease);
 }
 
 /* Inputs: 8px radius */
 input, textarea, [data-baseweb="select"] > div, [data-baseweb="input"] { border-radius:8px !important; }
 
 /* Alerts and links */
-[data-testid="stAlert"] { border-radius:10px; }
+[data-testid="stAlert"] { border-radius:10px; animation: riseIn var(--d-slow) var(--ease-out) both; }
 a, a:visited { color:var(--accent); transition: opacity var(--d-fast) var(--ease); }
-a:hover { opacity:0.8; }
+a:hover { opacity:0.78; }
 
-/* Spinner tinted to accent (perceived speed) */
+/* Spinner tinted to accent */
 [data-testid="stSpinner"] svg { color: var(--accent) !important; }
-
-/* Subtle, opacity-led page entrance. Short so Streamlit reruns stay calm
-   (Emil: do not animate frequently-seen things). */
-@keyframes fadeUp { from { opacity:0; transform: translateY(4px); } to { opacity:1; transform:none; } }
-.block-container { animation: fadeUp var(--d) var(--ease-out); }
 
 /* Hover affordances only on real hover-capable pointers (no touch false-positives) */
 @media (hover: hover) and (pointer: fine) {
-  .stButton > button:hover, .stDownloadButton > button:hover { border-color:var(--accent-bd) !important; }
-  [data-testid="stMetric"]:hover { border-color:var(--b2); transform: translateY(-1px); }
-  [data-testid="stExpander"]:hover { border-color:var(--b2); }
+  .stButton > button:hover, .stDownloadButton > button:hover {
+    transform: translateY(-1px) scale(1.02); box-shadow: var(--shadow); border-color:var(--accent-bd) !important;
+  }
+  [data-testid="stMetric"]:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color:var(--b2); }
+  [data-testid="stPlotlyChart"]:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+  [data-testid="stExpander"]:hover { box-shadow: var(--shadow); border-color:var(--b2); }
+  [data-baseweb="tab"]:hover { color:var(--accent) !important; transform: translateY(-1px); }
 }
 
-/* Respect reduced motion: keep colour/opacity, drop all movement */
+/* Respect reduced motion: drop our entrance + movement (but leave the spinner spinning) */
 @media (prefers-reduced-motion: reduce) {
-  .block-container { animation:none !important; }
-  .stButton > button:active, .stDownloadButton > button:active,
-  [data-testid="stMetric"]:hover { transform:none !important; }
+  .block-container, [data-testid="stMetric"], [data-testid="stPlotlyChart"],
+  [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stExpander"],
+  [data-testid="stHorizontalBlock"] > [data-testid="column"], [data-testid="stAlert"],
+  h2, h3 { animation: none !important; }
+  .stButton > button:active, .stButton > button:hover,
+  [data-testid="stMetric"]:hover, [data-testid="stPlotlyChart"]:hover,
+  [data-baseweb="tab"]:hover { transform: none !important; }
 }
 </style>
 """
@@ -222,19 +262,20 @@ PLOTLY_CFG = {"displayModeBar": False}
 
 
 def _style_fig(fig, ylog=False):
-    """Apply the dark teal design signature to a Plotly figure (no in-figure title)."""
+    """Apply the light warm-sand design signature to a Plotly figure (no in-figure title)."""
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Ubuntu, sans-serif", color="#e8e2da", size=13),
+        font=dict(family="Ubuntu, sans-serif", color="#1a1814", size=13),
         margin=dict(l=55, r=20, t=44, b=44),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
                     bgcolor="rgba(0,0,0,0)"),
         colorway=PALETTE,
         hoverlabel=dict(font=dict(family="Ubuntu, sans-serif")),
+        transition=dict(duration=400, easing="cubic-in-out"),
     )
-    axis = dict(gridcolor="#1E2E2C", zerolinecolor="#1E2E2C", linecolor="#7a8f8d",
-                tickcolor="#7a8f8d", tickfont=dict(color="#7a8f8d"),
-                title_font=dict(color="#7a8f8d"))
+    axis = dict(gridcolor="#D4CCC0", zerolinecolor="#D4CCC0", linecolor="#5c574e",
+                tickcolor="#5c574e", tickfont=dict(color="#5c574e"),
+                title_font=dict(color="#5c574e"))
     fig.update_xaxes(**axis)
     fig.update_yaxes(**axis)
     if ylog:
