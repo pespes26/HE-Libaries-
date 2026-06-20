@@ -200,8 +200,8 @@ def bench_aes(rows, next_id, ts_now, a, size, n):
         _n, _c = aes.encrypt(key, a)
         _ = aes.decrypt(key, _n, _c, a.shape)
     enc_t, (nonce, ct) = metrics.repeat(lambda: aes.encrypt(key, a), n)
-    dec_t, _ = metrics.repeat(lambda: aes.decrypt(key, nonce, ct, a.shape), n)
-    roundtrip = bool(np.array_equal(aes.decrypt(key, nonce, ct, a.shape), a))
+    dec_t, decrypted = metrics.repeat(lambda: aes.decrypt(key, nonce, ct, a.shape), n)
+    roundtrip = bool(np.array_equal(decrypted, a))  # reuse the timed-phase result
     row = blank_row()
     row.update(
         run_id=next_id(), timestamp=ts_now, scheme="AES-256-GCM", library="cryptography",
@@ -226,8 +226,8 @@ def bench_rsa(rows, next_id, ts_now, priv, pub, a, size, n):
         _cb = rsa.encrypt_block(pub, block)
         _ = rsa.decrypt_block(priv, _cb)
     enc_t, ctb = metrics.repeat(lambda: rsa.encrypt_block(pub, block), n)
-    dec_t, _ = metrics.repeat(lambda: rsa.decrypt_block(priv, ctb), n)
-    roundtrip = bool(rsa.block_to_value(rsa.decrypt_block(priv, ctb)) == float(a[0]))
+    dec_t, decrypted_block = metrics.repeat(lambda: rsa.decrypt_block(priv, ctb), n)
+    roundtrip = bool(rsa.block_to_value(decrypted_block) == float(a[0]))  # reuse timed result
     row = blank_row()
     row.update(
         run_id=next_id(), timestamp=ts_now, scheme="RSA-2048-OAEP", library="cryptography",

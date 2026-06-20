@@ -125,20 +125,25 @@ HE computation, and is labelled accordingly.
 
 Every operation decrypted correctly under all schemes. AES and RSA round-trips are exact.
 CKKS is approximate; its error is small and **stable across dataset sizes**, but differs by
-operation. The table reconciles the two figures that may otherwise look inconsistent — the
-low end (~10⁻¹¹) comes from addition, the high end (~10⁻⁷) from multiplication and the mean.
+operation. We report **both** the mean relative error and the maximum absolute error,
+because the two tell different stories (see the note below the table).
 
-| Operation | Mean relative error (range over all sizes) | Why |
-| --- | --- | --- |
-| Addition | ~1.7 × 10⁻¹¹ | One ciphertext addition; no rescale |
-| Sum | ~2 × 10⁻¹¹ – 6 × 10⁻¹⁰ | Many slot-rotations accumulate slightly more noise |
-| Multiplication | ~1.3 × 10⁻⁷ | Ciphertext × ciphertext + relinearization + rescale |
-| Average (mean) | ~1.1 – 1.4 × 10⁻⁷ | Dominated by the same scaling step as multiply |
+| Operation | Mean relative error | Max absolute error (N=100k) | Note |
+| --- | --- | --- | --- |
+| Addition | ~1.7 × 10⁻¹¹ | ~1.4 × 10⁻⁸ | Pure addition; relatively very precise |
+| Sum | ~2 × 10⁻¹¹ – 6 × 10⁻¹⁰ | ~1.1 × 10⁻⁴ | Additions only; tiny *relative* error, but absolute error grows with the large aggregate |
+| Multiplication | ~1.3 × 10⁻⁷ | ~1.3 × 10⁻³ | Ciphertext × ciphertext + rescale sets a ~10⁻⁷ relative floor |
+| Average (mean) | ~1.1 – 1.4 × 10⁻⁷ | ~5.4 × 10⁻⁶ | = sum × (1/N); the scalar multiply sets the same ~10⁻⁷ floor |
 
-**Full range across operations: ~1.7 × 10⁻¹¹ (add) to ~1.3 × 10⁻⁷ (multiply/mean).** For
-context, at N = 100,000 the homomorphic sum of ~5,006,249 differed from the exact value by
-about 1.1 × 10⁻⁴ in absolute terms — negligible for analytics, but non-zero, as CKKS
-requires.
+**Reading the table — a normalization caveat.** Relative error is normalized by the result's
+magnitude, and that magnitude differs by ~5 orders of magnitude across these operations
+(sum ≈ 5 × 10⁶ vs mean ≈ 50). So the apparent gap — sum at ~10⁻¹¹ versus mean at ~10⁻⁷ — is
+**largely a normalization artifact, not a real precision difference**: mean is simply
+sum × (1/N), so it cannot be "more wrong" than the sum it is built from. **Absolute error is
+the more honest signal for aggregates.** The genuine pattern is by operation *type*: pure
+additions (add, sum) are relatively very precise (~10⁻¹¹), while operations that include a
+ciphertext rescale (multiply, mean) share a ~10⁻⁷ relative floor. Either way the errors are
+negligible for analytics but non-zero, as CKKS requires.
 
 *[Figure: ckks_error_vs_size.png — CKKS approximation error vs dataset size, per operation.]*
 
@@ -159,6 +164,11 @@ requires ~log₂(slots) Galois-key rotations, each costly. Second, the cost scal
 number of ciphertext chunks — at N = 100,000 the data occupies 25 ciphertexts, so per-chunk
 work multiplies. Decryption is cheap for a scalar result (~0.7 ms) but larger for a full
 vector result (~14–20 ms at N = 100,000).
+
+Note that `mean` is not independent of `sum`: it is computed as `sum` followed by a plaintext
+scalar multiply (mean = sum × 1/N), so its cost necessarily *includes* sum's. The two are
+therefore near-identical (e.g. 501 vs 503 ms at N = 100,000), as expected — not two separate
+data points.
 
 *[Figure: ckks_runtime_vs_size.png — CKKS total time vs dataset size, per operation.]*
 *[Figure: ckks_cost_breakdown.png — encrypt / compute / decrypt split at the largest size.]*

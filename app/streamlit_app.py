@@ -20,6 +20,7 @@ import time
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 # Make the project root importable when Streamlit runs this file directly.
@@ -208,6 +209,64 @@ def hex_preview(raw: bytes, n: int = 48) -> str:
     return raw[:n].hex(" ") + (" ..." if len(raw) > n else "")
 
 
+# --- Plotly theming (design signature) -------------------------------------------
+# Consistent series colours across every chart: TEAL = HE/CKKS, GRAY = AES/plaintext
+# baseline; CORAL/AMBER for additional series. The reader learns the mapping once.
+PALETTE = ["#00A19B", "#D85A30", "#EF9F27", "#888780"]
+TEAL, CORAL, AMBER, GRAY = PALETTE
+
+
+def _style_fig(fig, title, ylog=False):
+    """Apply the dark teal design signature to a Plotly figure (used on every chart)."""
+    fig.update_layout(
+        title=dict(text=title, x=0, xanchor="left", font=dict(color="#e8e2da", size=16)),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Ubuntu, sans-serif", color="#e8e2da", size=13),
+        margin=dict(l=50, r=20, t=48, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    bgcolor="rgba(0,0,0,0)"),
+        colorway=PALETTE,
+        hoverlabel=dict(font=dict(family="Ubuntu, sans-serif")),
+    )
+    axis = dict(gridcolor="#1E2E2C", zerolinecolor="#1E2E2C", linecolor="#7a8f8d",
+                tickcolor="#7a8f8d", tickfont=dict(color="#7a8f8d"),
+                title_font=dict(color="#7a8f8d"))
+    fig.update_xaxes(**axis)
+    fig.update_yaxes(**axis)
+    if ylog:
+        fig.update_yaxes(type="log")
+    return fig
+
+
+def _line(piv, title, ytitle="", ylog=False):
+    """Themed line chart from a pivot table (index = x, one column per series)."""
+    fig = go.Figure()
+    for col in piv.columns:
+        fig.add_scatter(x=piv.index.astype(str), y=piv[col], name=str(col),
+                        mode="lines+markers", line=dict(width=2.5), marker=dict(size=7))
+    fig.update_xaxes(title="dataset size (records)", type="category")
+    fig.update_yaxes(title=ytitle)
+    return _style_fig(fig, title, ylog=ylog)
+
+
+def headline_table(df, op="sum"):
+    """Server-side cost of `op`: HE compute-on-ciphertext vs AES decrypt-then-compute."""
+    rows = []
+    for size in sorted(df.dataset_size.unique()):
+        he = df[(df.scheme == "CKKS") & (df.granularity == "packed")
+                & (df.operation == op) & (df.dataset_size == size)]
+        aes_r = df[(df.scheme == "AES-256-GCM") & (df.dataset_size == size)]
+        pt = df[(df.scheme == "plaintext") & (df.operation == op) & (df.dataset_size == size)]
+        if he.empty or aes_r.empty or pt.empty:
+            continue
+        rows.append({
+            "size": int(size),
+            "he_compute_ms": he.iloc[0].compute_time_mean * 1e3,
+            "aes_ms": (aes_r.iloc[0].decrypt_time_mean + pt.iloc[0].compute_time_mean) * 1e3,
+        })
+    return pd.DataFrame(rows)
+
+
 def build_workflow_table(df, op="sum"):
     """Cost of computing `op` over encrypted data: AES (must decrypt) vs HE (on ciphertext)."""
     rows = []
@@ -265,92 +324,117 @@ with tab_dash:
             "`docker compose run --rm benchmark`"
         )
     else:
-        if rc:
-            # Use .get with fallbacks so a stale/partial run_config.json never crashes.
-            ckks = rc.get("ckks", {})
-            ctx_bytes = rc.get("ckks_context_size_bytes")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("CKKS poly_modulus_degree", ckks.get("poly_modulus_degree", "—"))
-            c2.metric("CKKS slots / ciphertext", ckks.get("slots", "—"))
-            c3.metric("Key/context size",
-                      f"{ctx_bytes/1024/1024:.1f} MB" if ctx_bytes else "—")
-            c4.metric("Repeats per measurement", rc.get("n_repeats", "—"))
-
-        st.subheader("CKKS runtime vs dataset size (packed)")
         ck = df[(df.scheme == "CKKS") & (df.granularity == "packed")]
+
+        # === BLUF: the bottom line first — headline numbers, then the one key chart ===
+        head = headline_table(df, "sum")
+        if not head.empty:
+            last = head.iloc[-1]
+            slowdown = last.he_compute_ms / last.aes_ms if last.aes_ms else float("nan")
+            m1, m2, m3 = st.columns(3)
+            m1.metric(f"HE sum compute @ N={last['size']:,}", f"~{last.he_compute_ms:.0f} ms",
+                      help="CKKS computes on the ciphertext; the data is never decrypted.")
+            m2.metric("AES sum (decrypt + compute)", f"~{last.aes_ms:.2f} ms",
+                      help="Traditional path must decrypt first — plaintext is exposed.")
+            m3.metric("HE slowdown", f"~{slowdown:,.0f}×",
+                      help="The measured price of never exposing the data during computation.")
+
+            fig = go.Figure()
+            fig.add_bar(x=head["size"].astype(str), y=head.he_compute_ms,
+                        name="HE — compute on ciphertext (never exposed)", marker_color=TEAL)
+            fig.add_bar(x=head["size"].astype(str), y=head.aes_ms,
+                        name="AES — decrypt + compute (plaintext exposed)", marker_color=GRAY)
+            fig.update_xaxes(title="dataset size (records)", type="category")
+            fig.update_yaxes(title="time for sum (ms)")
+            st.plotly_chart(
+                _style_fig(fig, "Computing a sum on encrypted data: HE vs traditional (AES)", ylog=True),
+                use_container_width=True)
+            st.caption("The headline: HE keeps data encrypted during computation; AES must "
+                       "decrypt it first. HE's higher cost is the price of that protection.")
+
+        # === supporting detail ===
         if not ck.empty:
             piv = ck.pivot_table(index="dataset_size", columns="operation",
                                  values="total_time_mean") * 1e3
-            st.line_chart(piv)
-            st.caption("Total time = encrypt + compute + decrypt, in milliseconds.")
+            st.plotly_chart(
+                _line(piv, "CKKS runtime vs dataset size (packed)",
+                      ytitle="total time (ms) — encrypt + compute + decrypt"),
+                use_container_width=True)
 
         col_a, col_b = st.columns(2)
         with col_a:
-            st.subheader("Packing strategy: packed vs element-wise")
-            both = sorted(set(df[(df.scheme == "CKKS") & (df.granularity == "packed")].dataset_size)
+            both = sorted(set(ck.dataset_size)
                           & set(df[(df.scheme == "CKKS") & (df.granularity == "elementwise")].dataset_size))
             if both:
                 size = both[-1]
                 g = df[(df.scheme == "CKKS") & (df.dataset_size == size)]
                 pe = g.pivot_table(index="operation", columns="granularity",
                                    values="total_time_mean") * 1e3
-                st.bar_chart(pe)
-                st.caption(f"Total time (ms) at N={size}. Element-wise = one ciphertext "
-                           "per value; packed = batched. Note the scale difference.")
+                fig = go.Figure()
+                if "packed" in pe:
+                    fig.add_bar(x=pe.index, y=pe["packed"], name="packed", marker_color=TEAL)
+                if "elementwise" in pe:
+                    fig.add_bar(x=pe.index, y=pe["elementwise"], name="element-wise", marker_color=CORAL)
+                fig.update_yaxes(title="total time (ms)")
+                st.plotly_chart(
+                    _style_fig(fig, f"Packing: packed vs element-wise (N={size})", ylog=True),
+                    use_container_width=True)
             else:
                 st.info("No size has both granularities to compare.")
         with col_b:
-            st.subheader("CKKS approximation error (packed)")
             if not ck.empty:
                 perr = ck.pivot_table(index="dataset_size", columns="operation",
                                       values="mean_rel_error")
-                st.line_chart(perr)
-                st.caption("Mean relative error vs plaintext. Small but non-zero — CKKS "
-                           "is an approximate scheme.")
+                st.plotly_chart(
+                    _line(perr, "CKKS approximation error (packed)",
+                          ytitle="mean relative error", ylog=True),
+                    use_container_width=True)
 
-        st.subheader("Data-protection cost vs computation")
-        st.caption("AES/RSA columns are protection only — they cannot compute on ciphertext.")
-        prot = df[df.scheme.isin(["CKKS", "AES-256-GCM", "RSA-2048-OAEP"])].copy()
-        # Pick the largest size at which ALL three schemes have data, so the chart never
-        # silently drops a scheme (e.g. if a long 100k run was interrupted).
+        # Data-protection vs computation: largest size where all three schemes are present.
         ck_sum = df[(df.scheme == "CKKS") & (df.granularity == "packed") & (df.operation == "sum")]
         common = (set(ck_sum.dataset_size)
                   & set(df[df.scheme == "AES-256-GCM"].dataset_size)
                   & set(df[df.scheme == "RSA-2048-OAEP"].dataset_size))
-        if not prot.empty and common:
+        if common:
             size = max(common)
-            rows = []
-            cks = prot[(prot.scheme == "CKKS") & (prot.granularity == "packed")
-                       & (prot.operation == "sum") & (prot.dataset_size == size)]
+            labels, vals, colors = [], [], []
+            cks = ck_sum[ck_sum.dataset_size == size]
             if not cks.empty:
                 r = cks.iloc[0]
-                rows.append(("CKKS protect (enc+dec)",
-                             (r.encrypt_time_mean + r.decrypt_time_mean) * 1e3))
-                rows.append(("CKKS compute (sum)", r.compute_time_mean * 1e3))
-            a = prot[(prot.scheme == "AES-256-GCM") & (prot.dataset_size == size)]
+                labels += ["CKKS protect (enc+dec)", "CKKS compute (sum)"]
+                vals += [(r.encrypt_time_mean + r.decrypt_time_mean) * 1e3, r.compute_time_mean * 1e3]
+                colors += [TEAL, TEAL]
+            a = df[(df.scheme == "AES-256-GCM") & (df.dataset_size == size)]
             if not a.empty:
                 r = a.iloc[0]
-                rows.append(("AES protect (whole set)",
-                             (r.encrypt_time_mean + r.decrypt_time_mean) * 1e3))
-            rr = prot[(prot.scheme == "RSA-2048-OAEP") & (prot.dataset_size == size)]
+                labels.append("AES protect (whole set)")
+                vals.append((r.encrypt_time_mean + r.decrypt_time_mean) * 1e3)
+                colors.append(GRAY)
+            rr = df[(df.scheme == "RSA-2048-OAEP") & (df.dataset_size == size)]
             if not rr.empty:
                 r = rr.iloc[0]
-                rows.append(("RSA protect (per record)",
-                             (r.encrypt_time_mean + r.decrypt_time_mean) * 1e3))
-            if rows:
-                bar = pd.DataFrame(rows, columns=["step", "ms"]).set_index("step")
-                st.bar_chart(bar)
-                st.caption(f"Milliseconds at N={size}.")
+                labels.append("RSA protect (per record)")
+                vals.append((r.encrypt_time_mean + r.decrypt_time_mean) * 1e3)
+                colors.append(CORAL)
+            if labels:
+                fig = go.Figure(go.Bar(x=labels, y=vals, marker_color=colors))
+                fig.update_yaxes(title="time (ms)")
+                st.plotly_chart(
+                    _style_fig(fig, f"Data-protection vs computation cost (N={size})", ylog=True),
+                    use_container_width=True)
+                st.caption("AES/RSA are protection only — they cannot compute on ciphertext. "
+                           "Teal = HE/CKKS, gray = AES baseline, coral = RSA.")
 
-        st.subheader("Peak memory vs dataset size (RSS)")
-        if not ck.empty and not ck["peak_memory_mb"].dropna().empty:
-            pmem = ck.pivot_table(index="dataset_size", columns="operation",
-                                  values="peak_memory_mb")
-            st.line_chart(pmem)
-            aes_mem = df[df.scheme == "AES-256-GCM"]["peak_memory_mb"].dropna()
-            ref_txt = (f" For reference, AES peaks at ~{aes_mem.max():.1f} MB."
-                       if not aes_mem.empty else "")
-            st.caption("Peak process memory delta (MB) for CKKS packed." + ref_txt)
+        # Configuration (secondary context).
+        if rc:
+            ckks = rc.get("ckks", {})
+            ctx_bytes = rc.get("ckks_context_size_bytes")
+            if ctx_bytes:
+                st.caption(
+                    f"CKKS parameters: poly_modulus_degree={ckks.get('poly_modulus_degree', '—')}, "
+                    f"{ckks.get('slots', '—')} slots/ciphertext, "
+                    f"keys/context ≈ {ctx_bytes/1024/1024:.0f} MB (fixed), "
+                    f"{rc.get('n_repeats', '—')} repeats per measurement.")
 
         st.subheader("All results")
         schemes = st.multiselect("Filter scheme", sorted(df.scheme.unique()),
@@ -361,20 +445,21 @@ with tab_dash:
                      "ciphertext_size_bytes", "mean_rel_error", "correct", "notes"]
         st.dataframe(view[show_cols], use_container_width=True, hide_index=True)
 
-        with st.expander("Static figures (from analysis/make_plots.py)"):
-            figs = ["ckks_runtime_vs_size.png", "ckks_cost_breakdown.png",
-                    "ciphertext_size_vs_size.png", "ckks_error_vs_size.png",
-                    "protection_cost.png", "packed_vs_elementwise.png",
-                    "memory_vs_size.png", "workflow_comparison.png"]
-            cols = st.columns(2)
-            shown = False
-            for i, fig in enumerate(figs):
-                p = os.path.join(config.FIGURES_DIR, fig)
-                if os.path.exists(p):
-                    cols[i % 2].image(p, caption=fig, use_column_width=True)
-                    shown = True
-            if not shown:
-                st.info("No figures yet. Run `docker compose run --rm plots`.")
+        # Memory last and de-emphasized: RSS is noisy, not the headline signal.
+        with st.expander("Peak memory (RSS) — indicative only, not the headline signal"):
+            if not ck.empty and not ck["peak_memory_mb"].dropna().empty:
+                pmem = ck.pivot_table(index="dataset_size", columns="operation",
+                                      values="peak_memory_mb")
+                st.plotly_chart(
+                    _line(pmem, "Peak process memory vs dataset size (RSS)",
+                          ytitle="peak memory delta (MB)"),
+                    use_container_width=True)
+                st.caption("Process-RSS deltas are noisy for short operations; the authoritative "
+                           "size/memory signal is ciphertext size (see the report).")
+            else:
+                st.info("No memory data available.")
+
+        st.caption("Full static figures are in figures/ and embedded in report/FINAL_REPORT.docx.")
 
 
 # =================================================================================

@@ -142,7 +142,10 @@ Hardware: the developer's machine inside Docker (`python:3.11-slim`). Numbers ar
 - **Operation shape:** add/multiply are cheap (slot-wise); sum/average cost more because
   `.sum()` needs ~log₂(slots) Galois rotations.
 - **Accuracy:** CKKS relative error ranges ~**1.3e-7** (multiply/mean) down to **1e-11**
-  (add) — small but non-zero, as CKKS requires.
+  (add) — small but non-zero, as CKKS requires. We report **both** relative and max
+  absolute error: relative error is normalized by result magnitude (sum ≈ 5e6 vs mean ≈ 50),
+  so sum's tiny relative figure is partly a normalization artifact — absolute error is the
+  honest signal for aggregates.
 - **Baselines:** AES-256-GCM protects the whole dataset in ~0.02–0.19 ms (no compute);
   RSA-2048-OAEP ~0.02 ms encrypt / ~0.2 ms decrypt **per record**, 256 bytes/record.
 - **Key/context overhead:** ~**34.6 MB** of public + Galois + relin keys, reported

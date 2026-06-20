@@ -1,6 +1,3 @@
-# Fully resolved dependency lock (direct + transitive), pinned for reproducible builds.
-# Generated from the built image: docker run --rm he-benchmark python -m pip freeze
-# Edit requirements.txt for direct deps, then regenerate this file.
 altair==5.5.0
 attrs==26.1.0
 blinker==1.9.0
@@ -30,6 +27,7 @@ numpy==1.26.4
 packaging==24.2
 pandas==2.2.2
 pillow==10.4.0
+plotly==5.24.1
 pluggy==1.6.0
 protobuf==5.29.6
 psutil==5.9.8
