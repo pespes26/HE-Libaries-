@@ -1,0 +1,40 @@
+# Local-dev orchestration. results/ and figures/ are bind-mounted so outputs
+# persist on the host after the container exits.
+#
+#   docker compose build
+#   docker compose run --rm benchmark              # run the benchmark -> results/results.csv
+#   docker compose run --rm benchmark pytest -v    # run the correctness tests
+#   docker compose run --rm plots                  # generate figures/ from the CSV
+#   docker compose up dashboard                    # interactive UI at http://localhost:8501
+
+services:
+  benchmark:
+    build: .
+    image: he-benchmark
+    volumes:
+      - ./results:/app/results
+      - ./figures:/app/figures
+    command: python experiments/run_benchmark.py
+
+  plots:
+    image: he-benchmark
+    build: .
+    volumes:
+      - ./results:/app/results
+      - ./figures:/app/figures
+    command: python analysis/make_plots.py
+
+  dashboard:
+    image: he-benchmark
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./results:/app/results
+      - ./figures:/app/figures
+    command: >
+      streamlit run app/streamlit_app.py
+      --server.address=0.0.0.0
+      --server.port=8501
+      --server.headless=true
+      --browser.gatherUsageStats=false

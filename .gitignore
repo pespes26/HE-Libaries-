@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Claude Code local settings (machine-specific)
+.claude/
+
+# Generated outputs (figures/, results/) ARE committed as deliverable evidence.
+# Only ignore incidental local artifacts:
+report/FINAL_REPORT.pdf

@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-06-19T11:29:58.115660+00:00",
+  "seed": 42,
+  "dataset_sizes": [
+    200,
+    1000,
+    10000,
+    100000
+  ],
+  "n_repeats": 5,
+  "granularities": [
+    "packed",
+    "elementwise"
+  ],
+  "elementwise_max_size": 200,
+  "ckks": {
+    "poly_modulus_degree": 8192,
+    "coeff_mod_bit_sizes": [
+      60,
+      40,
+      40,
+      60
+    ],
+    "global_scale": 1099511627776.0,
+    "slots": 4096
+  },
+  "ckks_context_size_bytes": 35476814,
+  "environment": {
+    "python_version": "3.11.15",
+    "platform": "Linux-6.6.114.1-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "processor": "x86_64",
+    "machine": "x86_64",
+    "tenseal_version": "0.3.16",
+    "numpy_version": "1.26.4",
+    "pandas_version": "2.2.2",
+    "cryptography_version": "42.0.8",
+    "psutil_version": "5.9.8",
+    "matplotlib_version": "3.8.4",
+    "cpu_count": 16
+  }
+}

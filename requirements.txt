@@ -1,0 +1,14 @@
+# Direct dependencies (human-readable). The Docker build installs the fully-resolved
+# requirements.lock (direct + transitive); regenerate it after changing this file:
+#   docker run --rm he-benchmark python -m pip freeze > requirements.lock
+# Pinned for reproducibility. Python 3.11 only (TenSEAL has no cp313 wheel).
+# numpy pinned <2.0: TenSEAL 0.3.16 is compiled against the numpy 1.x ABI.
+tenseal==0.3.16
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.8.4
+cryptography==42.0.8
+psutil==5.9.8
+pytest==8.2.2
+streamlit==1.37.1
+
