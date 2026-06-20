@@ -216,13 +216,17 @@ PALETTE = ["#00A19B", "#D85A30", "#EF9F27", "#888780"]
 TEAL, CORAL, AMBER, GRAY = PALETTE
 
 
-def _style_fig(fig, title, ylog=False):
-    """Apply the dark teal design signature to a Plotly figure (used on every chart)."""
+# Chart titles are rendered in Streamlit (st.subheader) ABOVE each chart, not inside the
+# Plotly figure, so the top legend never collides with a title. Modebar hidden for cleanliness.
+PLOTLY_CFG = {"displayModeBar": False}
+
+
+def _style_fig(fig, ylog=False):
+    """Apply the dark teal design signature to a Plotly figure (no in-figure title)."""
     fig.update_layout(
-        title=dict(text=title, x=0, xanchor="left", font=dict(color="#e8e2da", size=16)),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="Ubuntu, sans-serif", color="#e8e2da", size=13),
-        margin=dict(l=50, r=20, t=48, b=40),
+        margin=dict(l=55, r=20, t=44, b=44),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
                     bgcolor="rgba(0,0,0,0)"),
         colorway=PALETTE,
@@ -238,7 +242,7 @@ def _style_fig(fig, title, ylog=False):
     return fig
 
 
-def _line(piv, title, ytitle="", ylog=False):
+def _line(piv, ytitle="", ylog=False):
     """Themed line chart from a pivot table (index = x, one column per series)."""
     fig = go.Figure()
     for col in piv.columns:
@@ -246,7 +250,7 @@ def _line(piv, title, ytitle="", ylog=False):
                         mode="lines+markers", line=dict(width=2.5), marker=dict(size=7))
     fig.update_xaxes(title="dataset size (records)", type="category")
     fig.update_yaxes(title=ytitle)
-    return _style_fig(fig, title, ylog=ylog)
+    return _style_fig(fig, ylog=ylog)
 
 
 def headline_table(df, op="sum"):
@@ -339,6 +343,7 @@ with tab_dash:
             m3.metric("HE slowdown", f"~{slowdown:,.0f}×",
                       help="The measured price of never exposing the data during computation.")
 
+            st.subheader("Computing a sum on encrypted data: HE vs traditional (AES)")
             fig = go.Figure()
             fig.add_bar(x=head["size"].astype(str), y=head.he_compute_ms,
                         name="HE — compute on ciphertext (never exposed)", marker_color=TEAL)
@@ -346,20 +351,19 @@ with tab_dash:
                         name="AES — decrypt + compute (plaintext exposed)", marker_color=GRAY)
             fig.update_xaxes(title="dataset size (records)", type="category")
             fig.update_yaxes(title="time for sum (ms)")
-            st.plotly_chart(
-                _style_fig(fig, "Computing a sum on encrypted data: HE vs traditional (AES)", ylog=True),
-                use_container_width=True)
+            st.plotly_chart(_style_fig(fig, ylog=True),
+                            use_container_width=True, config=PLOTLY_CFG)
             st.caption("The headline: HE keeps data encrypted during computation; AES must "
                        "decrypt it first. HE's higher cost is the price of that protection.")
 
         # === supporting detail ===
         if not ck.empty:
+            st.subheader("CKKS runtime vs dataset size (packed)")
             piv = ck.pivot_table(index="dataset_size", columns="operation",
                                  values="total_time_mean") * 1e3
             st.plotly_chart(
-                _line(piv, "CKKS runtime vs dataset size (packed)",
-                      ytitle="total time (ms) — encrypt + compute + decrypt"),
-                use_container_width=True)
+                _line(piv, ytitle="total time (ms) — encrypt + compute + decrypt"),
+                use_container_width=True, config=PLOTLY_CFG)
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -367,6 +371,7 @@ with tab_dash:
                           & set(df[(df.scheme == "CKKS") & (df.granularity == "elementwise")].dataset_size))
             if both:
                 size = both[-1]
+                st.subheader(f"Packing: packed vs element-wise (N={size})")
                 g = df[(df.scheme == "CKKS") & (df.dataset_size == size)]
                 pe = g.pivot_table(index="operation", columns="granularity",
                                    values="total_time_mean") * 1e3
@@ -376,19 +381,18 @@ with tab_dash:
                 if "elementwise" in pe:
                     fig.add_bar(x=pe.index, y=pe["elementwise"], name="element-wise", marker_color=CORAL)
                 fig.update_yaxes(title="total time (ms)")
-                st.plotly_chart(
-                    _style_fig(fig, f"Packing: packed vs element-wise (N={size})", ylog=True),
-                    use_container_width=True)
+                st.plotly_chart(_style_fig(fig, ylog=True),
+                                use_container_width=True, config=PLOTLY_CFG)
             else:
                 st.info("No size has both granularities to compare.")
         with col_b:
             if not ck.empty:
+                st.subheader("CKKS approximation error (packed)")
                 perr = ck.pivot_table(index="dataset_size", columns="operation",
                                       values="mean_rel_error")
                 st.plotly_chart(
-                    _line(perr, "CKKS approximation error (packed)",
-                          ytitle="mean relative error", ylog=True),
-                    use_container_width=True)
+                    _line(perr, ytitle="mean relative error", ylog=True),
+                    use_container_width=True, config=PLOTLY_CFG)
 
         # Data-protection vs computation: largest size where all three schemes are present.
         ck_sum = df[(df.scheme == "CKKS") & (df.granularity == "packed") & (df.operation == "sum")]
@@ -417,11 +421,11 @@ with tab_dash:
                 vals.append((r.encrypt_time_mean + r.decrypt_time_mean) * 1e3)
                 colors.append(CORAL)
             if labels:
+                st.subheader(f"Data-protection vs computation cost (N={size})")
                 fig = go.Figure(go.Bar(x=labels, y=vals, marker_color=colors))
                 fig.update_yaxes(title="time (ms)")
-                st.plotly_chart(
-                    _style_fig(fig, f"Data-protection vs computation cost (N={size})", ylog=True),
-                    use_container_width=True)
+                st.plotly_chart(_style_fig(fig, ylog=True),
+                                use_container_width=True, config=PLOTLY_CFG)
                 st.caption("AES/RSA are protection only — they cannot compute on ciphertext. "
                            "Teal = HE/CKKS, gray = AES baseline, coral = RSA.")
 
@@ -451,9 +455,8 @@ with tab_dash:
                 pmem = ck.pivot_table(index="dataset_size", columns="operation",
                                       values="peak_memory_mb")
                 st.plotly_chart(
-                    _line(pmem, "Peak process memory vs dataset size (RSS)",
-                          ytitle="peak memory delta (MB)"),
-                    use_container_width=True)
+                    _line(pmem, ytitle="peak memory delta (MB)"),
+                    use_container_width=True, config=PLOTLY_CFG)
                 st.caption("Process-RSS deltas are noisy for short operations; the authoritative "
                            "size/memory signal is ciphertext size (see the report).")
             else:
