@@ -7,6 +7,7 @@ psutil to capture true peak memory during an operation.
 """
 from __future__ import annotations
 
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -73,26 +74,46 @@ class MemorySampler:
 
 @dataclass
 class TimingResult:
-    """Aggregated wall-clock timing across repeated runs (warm-up excluded)."""
+    """Aggregated wall-clock timing across repeated samples (warm-up excluded)."""
     mean: float
     std: float
     runs: list = field(default_factory=list)
+    calls_per_sample: int = 1
 
 
-def repeat(fn: Callable[[], object], n: int, warmup: int = 1):
-    """Run `fn` warmup+n times; time each of the last n with perf_counter.
+def repeat(fn: Callable[[], object], n: int, warmup: int = 1,
+           min_sample_s: float = 1e-3):
+    """Time `fn` over n samples with perf_counter, after `warmup` discarded runs.
+
+    Sub-millisecond calls (AES, RSA, plaintext NumPy ops) sit at the timer's practical
+    noise floor, so a single-call sample mostly measures jitter. After the warm-up, one
+    probe run picks a batch size k: if the probe is faster than `min_sample_s`, each of
+    the n samples times a loop of k calls and records the per-call mean (k <= 1000,
+    identical for all samples so they stay comparable). HE operations run in
+    milliseconds-to-seconds, keep k = 1, and are unaffected.
 
     Returns (TimingResult, last_return_value). The return value lets callers reuse
     the actual object produced by the final run (e.g. a ciphertext) for size and
-    correctness checks.
+    correctness checks. `std` is the sample standard deviation (ddof=1) across the
+    n recorded samples; with batching it reflects variation between k-call means.
     """
     last = None
     for _ in range(max(0, warmup)):
         last = fn()
+    t0 = time.perf_counter()
+    last = fn()
+    probe = time.perf_counter() - t0
+    if probe >= min_sample_s:
+        k = 1
+    else:
+        k = min(1000, max(1, math.ceil(min_sample_s / max(probe, 1e-9))))
     times: list[float] = []
     for _ in range(n):
         t0 = time.perf_counter()
-        last = fn()
-        times.append(time.perf_counter() - t0)
+        for _ in range(k):
+            last = fn()
+        times.append((time.perf_counter() - t0) / k)
     arr = np.asarray(times, dtype=np.float64)
-    return TimingResult(mean=float(arr.mean()), std=float(arr.std(ddof=0)), runs=times), last
+    std = float(arr.std(ddof=1)) if len(arr) > 1 else 0.0
+    return TimingResult(mean=float(arr.mean()), std=std, runs=times,
+                        calls_per_sample=k), last

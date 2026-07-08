@@ -1,0 +1,41 @@
+{
+  "description": "CKKS error vs multiplicative depth (repeated ct x ct squaring of values in [1,2); failure = modulus chain exhausted)",
+  "seed": 42,
+  "n_values": 4096,
+  "input_range": [
+    1.0,
+    2.0
+  ],
+  "ckks": {
+    "poly_modulus_degree": 8192,
+    "coeff_mod_bit_sizes": [
+      60,
+      40,
+      40,
+      60
+    ],
+    "global_scale": 1099511627776.0
+  },
+  "levels": [
+    {
+      "depth": 1,
+      "expr": "x^2",
+      "ok": true,
+      "max_abs_error": 5.422171049929148e-07,
+      "mean_rel_error": 1.3411709686305835e-07
+    },
+    {
+      "depth": 2,
+      "expr": "x^4",
+      "ok": true,
+      "max_abs_error": 1.5036465159212753e-05,
+      "mean_rel_error": 9.387855329572881e-07
+    },
+    {
+      "depth": 3,
+      "expr": "x^8",
+      "ok": false,
+      "error": "ValueError: scale out of bounds"
+    }
+  ]
+}

@@ -1,9 +1,10 @@
 """Streamlit UI for the HE benchmark.
 
-Three tabs:
+Four tabs:
   1. Dashboard          - interactive charts/table from results/results.csv (+ run config).
   2. Live HE demo       - run CKKS encrypt -> compute -> decrypt for chosen params, verify.
   3. Confidential use case - aggregate private values under encryption (the "why HE" story).
+  4. Security & HE vs traditional - qualitative comparison + the workflow-cost contrast.
 
 Run locally:  streamlit run app/streamlit_app.py
 In Docker:    docker compose up dashboard   ->   http://localhost:8501
@@ -86,7 +87,7 @@ code, kbd, pre, samp { font-family:'Ubuntu Mono', ui-monospace, monospace !impor
 /* Page + element entrances (livelier, still opacity-led) */
 .block-container { animation: fadeUp var(--d) var(--ease-out); }
 [data-testid="stMetric"] { animation: popIn var(--d-slow) var(--ease-out) both; }
-[data-testid="stPlotlyChart"], [data-testid="stDataFrame"], [data-testid="stTable"],
+[data-testid="element-container"]:has(.js-plotly-plot), [data-testid="stDataFrame"], [data-testid="stTable"],
 [data-testid="stExpander"] { animation: riseIn var(--d-slow) var(--ease-out) both; }
 
 /* Staggered entrance across columns in a row (e.g. the headline metric cards) */
@@ -108,8 +109,9 @@ code, kbd, pre, samp { font-family:'Ubuntu Mono', ui-monospace, monospace !impor
 }
 [data-testid="stMetricValue"] { font-weight:500; letter-spacing:-0.02em; color:var(--tp); }
 
-/* Charts sit on cards (layered depth) */
-[data-testid="stPlotlyChart"] {
+/* Charts sit on cards (layered depth) — style the WRAPPER, never the .js-plotly-plot
+   div itself (that breaks Plotly's size calculation) */
+[data-testid="element-container"]:has(.js-plotly-plot) {
   background:var(--s1); border:1px solid var(--b1); border-radius:12px; padding:8px 8px 4px;
   transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease);
 }
@@ -164,19 +166,19 @@ a:hover { opacity:0.78; }
     transform: translateY(-1px) scale(1.02); box-shadow: var(--shadow); border-color:var(--accent-bd) !important;
   }
   [data-testid="stMetric"]:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color:var(--b2); }
-  [data-testid="stPlotlyChart"]:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+  [data-testid="element-container"]:has(.js-plotly-plot):hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
   [data-testid="stExpander"]:hover { box-shadow: var(--shadow); border-color:var(--b2); }
   [data-baseweb="tab"]:hover { color:var(--accent) !important; transform: translateY(-1px); }
 }
 
 /* Respect reduced motion: drop our entrance + movement (but leave the spinner spinning) */
 @media (prefers-reduced-motion: reduce) {
-  .block-container, [data-testid="stMetric"], [data-testid="stPlotlyChart"],
+  .block-container, [data-testid="stMetric"], [data-testid="element-container"]:has(.js-plotly-plot),
   [data-testid="stDataFrame"], [data-testid="stTable"], [data-testid="stExpander"],
   [data-testid="stHorizontalBlock"] > [data-testid="column"], [data-testid="stAlert"],
   h2, h3 { animation: none !important; }
   .stButton > button:active, .stButton > button:hover,
-  [data-testid="stMetric"]:hover, [data-testid="stPlotlyChart"]:hover,
+  [data-testid="stMetric"]:hover, [data-testid="element-container"]:has(.js-plotly-plot):hover,
   [data-baseweb="tab"]:hover { transform: none !important; }
 }
 </style>
@@ -217,6 +219,18 @@ def load_run_config():
         return None
     with open(config.RUN_CONFIG_JSON) as f:
         return json.load(f)
+
+
+@st.cache_data
+def load_depth_sweep():
+    path = os.path.join(config.RESULTS_DIR, "depth_sweep.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 # --- helpers ---------------------------------------------------------------------
@@ -295,7 +309,12 @@ def _line(piv, ytitle="", ylog=False):
 
 
 def headline_table(df, op="sum"):
-    """Server-side cost of `op`: HE compute-on-ciphertext vs AES decrypt-then-compute."""
+    """Cost of `op` over data encrypted at rest: HE on-ciphertext vs AES decrypt-then-compute.
+
+    he_steady_ms (compute + result decrypt) is the scenario-symmetric HE figure: both
+    sides start from data already stored encrypted. he_oneshot_ms additionally pays the
+    CKKS encryption (first upload). he_compute_ms is the pure on-ciphertext compute.
+    """
     rows = []
     for size in sorted(df.dataset_size.unique()):
         he = df[(df.scheme == "CKKS") & (df.granularity == "packed")
@@ -304,16 +323,25 @@ def headline_table(df, op="sum"):
         pt = df[(df.scheme == "plaintext") & (df.operation == op) & (df.dataset_size == size)]
         if he.empty or aes_r.empty or pt.empty:
             continue
+        h = he.iloc[0]
         rows.append({
             "size": int(size),
-            "he_compute_ms": he.iloc[0].compute_time_mean * 1e3,
+            "he_compute_ms": h.compute_time_mean * 1e3,
+            "he_steady_ms": (h.compute_time_mean + h.decrypt_time_mean) * 1e3,
+            "he_oneshot_ms": (h.encrypt_time_mean + h.compute_time_mean
+                              + h.decrypt_time_mean) * 1e3,
             "aes_ms": (aes_r.iloc[0].decrypt_time_mean + pt.iloc[0].compute_time_mean) * 1e3,
         })
     return pd.DataFrame(rows)
 
 
 def build_workflow_table(df, op="sum"):
-    """Cost of computing `op` over encrypted data: AES (must decrypt) vs HE (on ciphertext)."""
+    """Cost of computing `op` over encrypted data, under two explicit scenarios.
+
+    Both sides start from data stored encrypted at rest under their own scheme.
+    Steady-state HE = compute + result decrypt (symmetric with AES decrypt+compute);
+    one-shot HE additionally pays the CKKS encryption of the dataset.
+    """
     rows = []
     for size in sorted(df.dataset_size.unique()):
         aes_r = df[(df.scheme == "AES-256-GCM") & (df.dataset_size == size)]
@@ -322,13 +350,15 @@ def build_workflow_table(df, op="sum"):
                 & (df.operation == op) & (df.dataset_size == size)]
         if aes_r.empty or pt.empty or he.empty:
             continue
+        h = he.iloc[0]
         aes_total = (aes_r.iloc[0].decrypt_time_mean + pt.iloc[0].compute_time_mean) * 1e3
-        he_total = (he.iloc[0].encrypt_time_mean + he.iloc[0].compute_time_mean
-                    + he.iloc[0].decrypt_time_mean) * 1e3
+        he_steady = (h.compute_time_mean + h.decrypt_time_mean) * 1e3
+        he_oneshot = (h.encrypt_time_mean + h.compute_time_mean + h.decrypt_time_mean) * 1e3
         rows.append({
             "dataset_size": int(size),
-            "AES decrypt+compute (ms)": round(aes_total, 3),
-            "HE enc+compute+dec (ms)": round(he_total, 3),
+            "AES: decrypt + compute (ms)": round(aes_total, 3),
+            "HE steady-state: compute + result decrypt (ms)": round(he_steady, 3),
+            "HE one-shot: + CKKS encryption (ms)": round(he_oneshot, 3),
             "AES exposes plaintext": True,
             "HE exposes plaintext": False,
         })
@@ -375,36 +405,71 @@ with tab_dash:
         head = headline_table(df, "sum")
         if not head.empty:
             last = head.iloc[-1]
-            slowdown = last.he_compute_ms / last.aes_ms if last.aes_ms else float("nan")
-            m1, m2, m3 = st.columns(3)
-            m1.metric(f"HE sum compute @ N={last['size']:,}", f"~{last.he_compute_ms:.0f} ms",
-                      help="CKKS computes on the ciphertext; the data is never decrypted.")
-            m2.metric("AES sum (decrypt + compute)", f"~{last.aes_ms:.2f} ms",
-                      help="Traditional path must decrypt first — plaintext is exposed.")
+            slowdown = last.he_steady_ms / last.aes_ms if last.aes_ms else float("nan")
+            ctx_mb = (rc or {}).get("ckks_context_size_bytes")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric(f"HE sum @ N={int(last['size']):,}", f"~{last.he_steady_ms:.0f} ms",
+                      help="Steady-state: compute on ciphertext + decrypt only the result. "
+                           f"One-shot (incl. CKKS encryption): ~{last.he_oneshot_ms:.0f} ms.")
+            m2.metric("AES path (decrypt + compute)", f"~{last.aes_ms:.2f} ms",
+                      help="Traditional path must decrypt first — plaintext is exposed "
+                           "to the compute party.")
             m3.metric("HE slowdown", f"~{slowdown:,.0f}×",
-                      help="The measured price of never exposing the data during computation.")
+                      help="Steady-state HE vs AES decrypt+compute, same data at rest on "
+                           "both sides. The measured price of never exposing the data.")
+            if ctx_mb:
+                m4.metric("Fixed HE keys/context", f"{ctx_mb / 1e6:.0f} MB",
+                          help="Public + Galois + relinearization keys, generated and "
+                               "shipped once before any computation — independent of "
+                               "dataset size. AES needs 32 bytes of key material.")
+            else:
+                m4.metric("Fixed HE keys/context", "—",
+                          help="Run the benchmark to record the context size.")
 
             st.subheader("Computing a sum on encrypted data: HE vs traditional (AES)")
             fig = go.Figure()
-            fig.add_bar(x=head["size"].astype(str), y=head.he_compute_ms,
-                        name="HE — compute on ciphertext (never exposed)", marker_color=TEAL)
+            fig.add_bar(x=head["size"].astype(str), y=head.he_steady_ms,
+                        name="HE steady-state — compute + result decrypt (never exposed)",
+                        marker_color=TEAL,
+                        hovertemplate="N=%{x}<br>%{y:.1f} ms<extra>HE steady-state</extra>")
+            fig.add_bar(x=head["size"].astype(str), y=head.he_oneshot_ms,
+                        name="HE one-shot — + CKKS encryption of the dataset",
+                        marker_color="#66C5C0",
+                        hovertemplate="N=%{x}<br>%{y:.1f} ms<extra>HE one-shot</extra>")
             fig.add_bar(x=head["size"].astype(str), y=head.aes_ms,
-                        name="AES — decrypt + compute (plaintext exposed)", marker_color=GRAY)
+                        name="AES — decrypt + compute (plaintext EXPOSED)", marker_color=GRAY,
+                        hovertemplate="N=%{x}<br>%{y:.3f} ms<extra>AES</extra>")
             fig.update_xaxes(title="dataset size (records)", type="category")
-            fig.update_yaxes(title="time for sum (ms)")
+            fig.update_yaxes(title="time for sum (ms, log scale)")
             st.plotly_chart(_style_fig(fig, ylog=True),
                             use_container_width=True, config=PLOTLY_CFG)
-            st.caption("The headline: HE keeps data encrypted during computation; AES must "
-                       "decrypt it first. HE's higher cost is the price of that protection.")
+            st.caption("Scenario: both sides start from data stored encrypted at rest. "
+                       "AES must decrypt it to compute (plaintext exposed); HE computes on "
+                       "the ciphertext and decrypts only the result. HE's higher cost is "
+                       "the price of that protection — not a defect of the implementation.")
 
         # === supporting detail ===
         if not ck.empty:
             st.subheader("CKKS runtime vs dataset size (packed)")
-            piv = ck.pivot_table(index="dataset_size", columns="operation",
-                                 values="total_time_mean") * 1e3
-            st.plotly_chart(
-                _line(piv, ytitle="total time (ms) — encrypt + compute + decrypt"),
-                use_container_width=True, config=PLOTLY_CFG)
+            fig = go.Figure()
+            for op_name, g in ck.groupby("operation"):
+                g = g.sort_values("dataset_size")
+                total_std = (g.encrypt_time_std.fillna(0) ** 2
+                             + g.compute_time_std.fillna(0) ** 2
+                             + g.decrypt_time_std.fillna(0) ** 2) ** 0.5 * 1e3
+                fig.add_scatter(
+                    x=g.dataset_size.astype(int).astype(str), y=g.total_time_mean * 1e3,
+                    name=str(op_name), mode="lines+markers",
+                    line=dict(width=2.5), marker=dict(size=7),
+                    error_y=dict(type="data", array=total_std, visible=True, width=3),
+                    hovertemplate="N=%{x}<br>%{y:.1f} ms"
+                                  "<extra>" + str(op_name) + "</extra>")
+            fig.update_xaxes(title="dataset size (records)", type="category")
+            fig.update_yaxes(title="total time (ms) — encrypt + compute + decrypt")
+            st.plotly_chart(_style_fig(fig), use_container_width=True, config=PLOTLY_CFG)
+            st.caption("Mean ± std over 5 timed runs (1 discarded warm-up). Totals count "
+                       "one dataset encryption; add/multiply take a second operand that is "
+                       "encrypted once outside the timed phase.")
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -421,74 +486,231 @@ with tab_dash:
                     fig.add_bar(x=pe.index, y=pe["packed"], name="packed", marker_color=TEAL)
                 if "elementwise" in pe:
                     fig.add_bar(x=pe.index, y=pe["elementwise"], name="element-wise", marker_color=CORAL)
-                fig.update_yaxes(title="total time (ms)")
+                fig.update_yaxes(title="total time (ms, log scale)")
                 st.plotly_chart(_style_fig(fig, ylog=True),
                                 use_container_width=True, config=PLOTLY_CFG)
+                st.caption("Packing is a prerequisite, not an optimization: element-wise "
+                           "is ~180× slower and ~200× larger, and does not run at all "
+                           f"above N={config.ELEMENTWISE_MAX_SIZE}.")
             else:
                 st.info("No size has both granularities to compare.")
         with col_b:
             if not ck.empty:
                 st.subheader("CKKS approximation error (packed)")
-                perr = ck.pivot_table(index="dataset_size", columns="operation",
-                                      values="mean_rel_error")
+                err_metric = st.radio("Error metric", ["mean relative", "max absolute"],
+                                      horizontal=True, label_visibility="collapsed")
+                col = "mean_rel_error" if err_metric == "mean relative" else "max_abs_error"
+                perr = ck.pivot_table(index="dataset_size", columns="operation", values=col)
                 st.plotly_chart(
-                    _line(perr, ytitle="mean relative error", ylog=True),
+                    _line(perr, ytitle=f"{err_metric} error (log scale)", ylog=True),
                     use_container_width=True, config=PLOTLY_CFG)
+                st.caption("Toggle the metric: relative error is normalized by the result's "
+                           "magnitude (sum ≈ 5×10⁶ vs mean ≈ 50), so sum's tiny relative "
+                           "figure is partly a normalization artifact — absolute error is "
+                           "the honest signal for aggregates. mul/mean share the ~10⁻⁷ "
+                           "rescale floor.")
+
+        col_c, col_d = st.columns(2)
+        with col_c:
+            st.subheader("Size: encrypted vs raw")
+            sizes_all = sorted(int(s) for s in df.dataset_size.dropna().unique())
+            ck_sz = df[(df.scheme == "CKKS") & (df.granularity == "packed")
+                       & (df.operation == "sum")].set_index("dataset_size")
+            aes_sz = df[df.scheme == "AES-256-GCM"].set_index("dataset_size")
+            pt_sz = df[(df.scheme == "plaintext")
+                       & (df.operation == "sum")].set_index("dataset_size")
+            fig = go.Figure()
+            xs = [f"{s:,}" for s in sizes_all]
+            if not pt_sz.empty:
+                fig.add_bar(x=xs, y=[pt_sz.ciphertext_size_bytes.get(s) / 1024 for s in sizes_all],
+                            name="raw plaintext", marker_color=GRAY)
+            if not aes_sz.empty:
+                fig.add_bar(x=xs, y=[aes_sz.ciphertext_size_bytes.get(s) / 1024 for s in sizes_all],
+                            name="AES-256-GCM (+28 B)", marker_color=AMBER)
+            if not ck_sz.empty:
+                ratios = [ck_sz.ciphertext_size_bytes.get(s) / pt_sz.ciphertext_size_bytes.get(s)
+                          if s in ck_sz.index and s in pt_sz.index else None for s in sizes_all]
+                fig.add_bar(x=xs, y=[ck_sz.ciphertext_size_bytes.get(s) / 1024 for s in sizes_all],
+                            name="CKKS (packed)", marker_color=TEAL,
+                            text=[("" if not r else (f"×{r:.0f}" if r >= 20 else f"×{r:.1f}"))
+                                  for r in ratios],
+                            textposition="outside")
+            fig.update_xaxes(title="dataset size (records)", type="category")
+            fig.update_yaxes(title="stored size (KB, log scale)")
+            st.plotly_chart(_style_fig(fig, ylog=True),
+                            use_container_width=True, config=PLOTLY_CFG)
+            st.caption("×N = CKKS inflation vs raw. One CKKS ciphertext is ~334 KB however "
+                       "few of its 4,096 slots are used — the overhead falls from ~209× "
+                       "(N=200) toward ~10× only once the slots fill up. AES adds 28 bytes.")
+        with col_d:
+            st.subheader("Error vs multiplication depth")
+            sweep = load_depth_sweep()
+            if sweep and sweep.get("levels"):
+                ok = [lv for lv in sweep["levels"] if lv.get("ok")]
+                failed = next((lv for lv in sweep["levels"] if not lv.get("ok")), None)
+                fig = go.Figure()
+                fig.add_bar(x=[f"depth {lv['depth']} ({lv['expr']})" for lv in ok],
+                            y=[lv["mean_rel_error"] for lv in ok],
+                            name="mean relative error", marker_color=TEAL,
+                            text=[f"{lv['mean_rel_error']:.1e}" for lv in ok],
+                            textposition="outside")
+                if failed:
+                    top = max(lv["mean_rel_error"] for lv in ok) * 4
+                    fig.add_bar(x=[f"depth {failed['depth']} ({failed['expr']})"], y=[top],
+                                name=f"depth {failed['depth']}: FAILS (chain exhausted)",
+                                marker=dict(color="rgba(216,90,48,0.15)",
+                                            line=dict(color=CORAL, width=2),
+                                            pattern=dict(shape="/", fgcolor=CORAL)))
+                fig.update_yaxes(title="mean relative error (log scale)")
+                st.plotly_chart(_style_fig(fig, ylog=True),
+                                use_container_width=True, config=PLOTLY_CFG)
+                chain = sweep.get("ckks", {}).get("coeff_mod_bit_sizes")
+                st.caption(f"Measured by repeated ct×ct squaring of values in [1, 2) "
+                           f"(experiments/depth_sweep.py). The chain {chain} affords two "
+                           "rescales: error grows ~7× from depth 1 to 2, and a third "
+                           "multiplication is refused outright — HE is depth-limited, "
+                           "not merely slow.")
+            else:
+                st.info("No depth-sweep data. Run: `docker compose run --rm benchmark "
+                        "python experiments/depth_sweep.py`")
+
+        # Where the time goes: encrypt / compute / decrypt, at a selectable size.
+        if not ck.empty:
+            st.subheader("Where the time goes (CKKS, packed)")
+            sizes_ck = sorted(int(s) for s in ck.dataset_size.unique())
+            pick = st.radio("Dataset size", sizes_ck, index=len(sizes_ck) - 1,
+                            horizontal=True, format_func=lambda s: f"{s:,}",
+                            label_visibility="collapsed")
+            g = ck[ck.dataset_size == pick].sort_values("operation")
+            fig = go.Figure()
+            fig.add_bar(x=g.operation, y=g.encrypt_time_mean * 1e3, name="encrypt",
+                        marker_color=TEAL)
+            fig.add_bar(x=g.operation, y=g.compute_time_mean * 1e3,
+                        name="compute (on ciphertext)", marker_color=CORAL)
+            fig.add_bar(x=g.operation, y=g.decrypt_time_mean * 1e3, name="decrypt result",
+                        marker_color=AMBER)
+            fig.update_layout(barmode="stack")
+            fig.update_yaxes(title="time (ms)")
+            st.plotly_chart(_style_fig(fig), use_container_width=True, config=PLOTLY_CFG)
+            st.caption("sum/mean are dominated by compute: reducing a vector takes "
+                       "~log₂(N) Galois-key rotations per ciphertext chunk. add/mul are "
+                       "slot-wise and cheap; their cost is mostly encryption.")
 
         # Data-protection vs computation: largest size where all three schemes are present.
+        # The CKKS protect bar uses the `add` row, whose decrypt phase is the full vector
+        # result — a true whole-dataset round-trip, symmetric with the AES bar. (The `sum`
+        # row's decrypt is a length-1 result and would understate CKKS here.)
+        ck_add = df[(df.scheme == "CKKS") & (df.granularity == "packed") & (df.operation == "add")]
         ck_sum = df[(df.scheme == "CKKS") & (df.granularity == "packed") & (df.operation == "sum")]
-        common = (set(ck_sum.dataset_size)
+        common = (set(ck_add.dataset_size)
                   & set(df[df.scheme == "AES-256-GCM"].dataset_size)
                   & set(df[df.scheme == "RSA-2048-OAEP"].dataset_size))
         if common:
             size = max(common)
             labels, vals, colors = [], [], []
+            cka = ck_add[ck_add.dataset_size == size]
+            if not cka.empty:
+                r = cka.iloc[0]
+                labels.append("CKKS protect<br>(enc + dec whole dataset)")
+                vals.append((r.encrypt_time_mean + r.decrypt_time_mean) * 1e3)
+                colors.append(TEAL)
             cks = ck_sum[ck_sum.dataset_size == size]
             if not cks.empty:
-                r = cks.iloc[0]
-                labels += ["CKKS protect (enc+dec)", "CKKS compute (sum)"]
-                vals += [(r.encrypt_time_mean + r.decrypt_time_mean) * 1e3, r.compute_time_mean * 1e3]
-                colors += [TEAL, TEAL]
+                labels.append("CKKS compute<br>(sum on ciphertext)")
+                vals.append(cks.iloc[0].compute_time_mean * 1e3)
+                colors.append("#66C5C0")
             a = df[(df.scheme == "AES-256-GCM") & (df.dataset_size == size)]
             if not a.empty:
                 r = a.iloc[0]
-                labels.append("AES protect (whole set)")
+                labels.append("AES protect<br>(whole dataset)")
                 vals.append((r.encrypt_time_mean + r.decrypt_time_mean) * 1e3)
                 colors.append(GRAY)
             rr = df[(df.scheme == "RSA-2048-OAEP") & (df.dataset_size == size)]
             if not rr.empty:
                 r = rr.iloc[0]
-                labels.append("RSA protect (per record)")
+                labels.append("RSA protect<br>(ONE 8-byte record)")
                 vals.append((r.encrypt_time_mean + r.decrypt_time_mean) * 1e3)
                 colors.append(CORAL)
             if labels:
-                st.subheader(f"Data-protection vs computation cost (N={size})")
-                fig = go.Figure(go.Bar(x=labels, y=vals, marker_color=colors))
-                fig.update_yaxes(title="time (ms)")
+                st.subheader(f"Data-protection vs computation cost (N={size:,})")
+                fig = go.Figure(go.Bar(x=labels, y=vals, marker_color=colors,
+                                       text=[f"{v:,.2f} ms" for v in vals],
+                                       textposition="outside"))
+                fig.update_yaxes(title="time (ms, log scale)")
                 st.plotly_chart(_style_fig(fig, ylog=True),
                                 use_container_width=True, config=PLOTLY_CFG)
-                st.caption("AES/RSA are protection only — they cannot compute on ciphertext. "
-                           "Teal = HE/CKKS, gray = AES baseline, coral = RSA.")
+                st.caption("Protection = encrypt + decrypt the dataset itself. AES/RSA are "
+                           "protection only — they cannot compute on ciphertext — and the "
+                           "RSA bar covers a single 8-byte record (RSA-2048-OAEP cannot "
+                           "hold bulk data; real systems wrap an AES key instead).")
 
-        # Configuration (secondary context).
+        # Run configuration & environment (reproducibility context).
         if rc:
-            ckks = rc.get("ckks", {})
-            ctx_bytes = rc.get("ckks_context_size_bytes")
-            if ctx_bytes:
-                st.caption(
-                    f"CKKS parameters: poly_modulus_degree={ckks.get('poly_modulus_degree', '—')}, "
-                    f"{ckks.get('slots', '—')} slots/ciphertext, "
-                    f"keys/context ≈ {ctx_bytes/1024/1024:.0f} MB (fixed), "
-                    f"{rc.get('n_repeats', '—')} repeats per measurement.")
+            with st.expander("Run configuration & environment (reproducibility)"):
+                ckks = rc.get("ckks", {})
+                env = rc.get("environment", {})
+                ctx_bytes = rc.get("ckks_context_size_bytes")
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**CKKS / experiment**")
+                    st.markdown(
+                        f"- `poly_modulus_degree` = {ckks.get('poly_modulus_degree', '—')} "
+                        f"→ {ckks.get('slots', '—')} slots/ciphertext\n"
+                        f"- coeff modulus chain = {ckks.get('coeff_mod_bit_sizes', '—')} "
+                        f"(~128-bit security)\n"
+                        f"- global scale = 2⁴⁰\n"
+                        f"- keys/context ≈ {ctx_bytes / 1e6:.0f} MB (fixed, one-time)\n"
+                        f"- seed = {rc.get('seed', '—')}, "
+                        f"{rc.get('n_repeats', '—')} repeats + 1 discarded warm-up\n"
+                        f"- sizes = {rc.get('dataset_sizes', '—')}, element-wise capped at "
+                        f"{rc.get('elementwise_max_size', '—')}")
+                with c2:
+                    st.markdown("**Environment of the committed run**")
+                    st.markdown(
+                        f"- Python {env.get('python_version', '—')} on "
+                        f"`{env.get('platform', '—')}`\n"
+                        f"- CPU: {env.get('cpu_model', env.get('processor', '—'))} "
+                        f"({env.get('cpu_count', '—')} cores"
+                        + (f", {env.get('memory_total_gb')} GB RAM" if env.get('memory_total_gb') else "")
+                        + ")\n"
+                        f"- TenSEAL {env.get('tenseal_version', '—')}, "
+                        f"NumPy {env.get('numpy_version', '—')}, "
+                        f"cryptography {env.get('cryptography_version', '—')}\n"
+                        f"- run timestamp: `{rc.get('timestamp', '—')}`")
 
         st.subheader("All results")
-        schemes = st.multiselect("Filter scheme", sorted(df.scheme.unique()),
-                                 default=sorted(df.scheme.unique()))
-        view = df[df.scheme.isin(schemes)] if schemes else df
+        fcol, dcol = st.columns([3, 1])
+        with fcol:
+            schemes = st.multiselect("Filter scheme", sorted(df.scheme.unique()),
+                                     default=sorted(df.scheme.unique()))
+        with dcol:
+            st.download_button("Download results.csv",
+                               data=df.to_csv(index=False).encode(),
+                               file_name="results.csv", mime="text/csv",
+                               use_container_width=True)
+        view = (df[df.scheme.isin(schemes)] if schemes else df).copy()
+        for c in ("encrypt_time_mean", "compute_time_mean", "decrypt_time_mean"):
+            view[c.replace("_time_mean", "_ms")] = view[c] * 1e3
+        view["ciphertext_KB"] = view.ciphertext_size_bytes / 1024
         show_cols = ["scheme", "operation", "dataset_size", "granularity",
-                     "encrypt_time_mean", "compute_time_mean", "decrypt_time_mean",
-                     "ciphertext_size_bytes", "mean_rel_error", "correct", "notes"]
-        st.dataframe(view[show_cols], use_container_width=True, hide_index=True)
+                     "encrypt_ms", "compute_ms", "decrypt_ms",
+                     "ciphertext_KB", "mean_rel_error", "correct", "notes"]
+        st.dataframe(
+            view[show_cols], use_container_width=True, hide_index=True,
+            column_config={
+                "dataset_size": st.column_config.NumberColumn("N", format="%d"),
+                "encrypt_ms": st.column_config.NumberColumn("encrypt (ms)", format="%.3f"),
+                "compute_ms": st.column_config.NumberColumn("compute (ms)", format="%.3f"),
+                "decrypt_ms": st.column_config.NumberColumn("decrypt (ms)", format="%.3f"),
+                "ciphertext_KB": st.column_config.NumberColumn("ciphertext (KB)",
+                                                               format="%.1f"),
+                "mean_rel_error": st.column_config.NumberColumn("mean rel. error",
+                                                                format="%.2e"),
+            })
+        st.caption("Times are means over 5 runs (stds are in the CSV). AES/RSA rows have "
+                   "no compute column — they cannot compute on ciphertext. RSA rows repeat "
+                   "one per-record measurement at each N for context; the cost does not "
+                   "scale with the dataset.")
 
         # Memory last and de-emphasized: RSS is noisy, not the headline signal.
         with st.expander("Peak memory (RSS) — indicative only, not the headline signal"):
@@ -498,12 +720,15 @@ with tab_dash:
                 st.plotly_chart(
                     _line(pmem, ytitle="peak memory delta (MB)"),
                     use_container_width=True, config=PLOTLY_CFG)
-                st.caption("Process-RSS deltas are noisy for short operations; the authoritative "
-                           "size/memory signal is ciphertext size (see the report).")
+                st.caption("Process-RSS deltas are only meaningful on a cold first "
+                           "operation; once pages are resident, later ops reuse them and "
+                           "read near-zero. The authoritative size/memory signal is "
+                           "serialized ciphertext size plus the fixed key/context size.")
             else:
                 st.info("No memory data available.")
 
-        st.caption("Full static figures are in figures/ and embedded in report/FINAL_REPORT.docx.")
+        st.caption("Full static figures are in figures/ and embedded in "
+                   "report/FINAL_REPORT.docx.")
 
 
 # =================================================================================
@@ -563,11 +788,15 @@ with tab_live:
         m1.metric("Encrypt", f"{enc_t*1e3:.1f} ms")
         m2.metric("Compute (on ciphertext)", f"{comp_t*1e3:.1f} ms")
         m3.metric("Decrypt", f"{dec_t*1e3:.1f} ms")
-        m4.metric("Ciphertext size", f"{ct_size/1024:.1f} KB", help=f"{n_ct} ciphertext(s)")
+        m4.metric("Ciphertext size", f"{ct_size/1024:.1f} KB",
+                  help=f"{n_ct} ciphertext(s), {config.CKKS_SLOTS} slots each. On top of "
+                       "this comes the fixed ~34 MB public context (keys), shipped once — "
+                       "see the Dashboard tab.")
 
         if correct:
             st.success(f"Decrypted result matches plaintext within tolerance "
-                       f"(mean rel. error {mean_rel:.2e}, max abs {max_abs:.2e}).")
+                       f"(mean rel. error {mean_rel:.2e}, max abs {max_abs:.2e}; "
+                       f"tolerance: rel {config.CKKS_REL_TOL:g} / abs {config.CKKS_ABS_TOL:g}).")
         else:
             st.error(f"Result outside tolerance (mean rel. error {mean_rel:.2e}). "
                      "CKKS noise budget may be exhausted for this operation.")
@@ -666,8 +895,10 @@ with tab_sec:
     st.markdown(
         "To analyze **AES**-protected data you must **decrypt it first** — the plaintext is "
         "exposed to whoever runs the computation. **HE** computes directly on the ciphertext, "
-        "so the data is never exposed. The benchmark below shows HE costs more time, which is "
-        "the price of that protection."
+        "so the data is never exposed. Both columns below start from data **stored encrypted "
+        "at rest** under each scheme: *steady-state* HE is compute + result decrypt (the "
+        "scenario-symmetric comparison); *one-shot* HE additionally pays the CKKS encryption "
+        "of the dataset (first upload to an untrusted cloud)."
     )
 
     dfw = load_results()
@@ -681,8 +912,11 @@ with tab_sec:
             st.info("Not enough data for this comparison.")
         else:
             st.dataframe(wt, hide_index=True, use_container_width=True)
-            p = os.path.join(config.FIGURES_DIR, "workflow_comparison.png")
-            if os.path.exists(p):
-                st.image(p, use_column_width=True)
+            if op == "sum":
+                p = os.path.join(config.FIGURES_DIR, "workflow_comparison.png")
+                if os.path.exists(p):
+                    st.image(p, use_column_width=True,
+                             caption="Static figure (op = sum) — regenerate via "
+                                     "`docker compose run --rm plots`.")
             st.caption("AES exposes plaintext during computation; HE does not. HE's higher "
                        "cost is the measured overhead of protecting data in use.")

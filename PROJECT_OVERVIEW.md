@@ -35,7 +35,7 @@ memory, ciphertext size, and correctness — and when is that overhead acceptabl
 | Tests | pytest | 8.2.2 | Correctness, security, app smoke tests |
 | UI | **Streamlit** | 1.37.1 | Interactive dashboard, live demo, use case |
 | Runtime | **Docker** (`python:3.11-slim`) + docker-compose | — | Full reproducibility; `results/` and `figures/` bind-mounted to host |
-| Design | Ubuntu / Ubuntu Mono fonts; injected CSS | — | Dark "design signature" + crisp motion |
+| Design | Ubuntu / Ubuntu Mono fonts; injected CSS | — | Light warm-sand "design signature" + crisp motion |
 
 ---
 
@@ -68,9 +68,10 @@ he_benchmark/
   security.py                   # qualitative security profiles + takeaways
   environment.py                # versions / CPU capture
 experiments/run_benchmark.py    # orchestrates size × op × scheme; writes results CSV + run-config JSON
+experiments/depth_sweep.py      # CKKS error vs multiplicative depth -> depth_sweep.json
 analysis/make_plots.py          # 8 figures + workflow_comparison.csv
 app/streamlit_app.py            # 4-tab dashboard (design-styled)
-tests/                          # 15 tests (correctness, security, Streamlit AppTest smoke)
+tests/                          # 21 tests (correctness, metrics layer, security, AppTest smoke)
 Dockerfile · docker-compose.yml · .streamlit/config.toml · README.md
 results/ · figures/             # generated outputs (bind-mounted)
 ```
@@ -105,10 +106,11 @@ results/ · figures/             # generated outputs (bind-mounted)
   bulk figure.
 - **`count` is plaintext metadata**, not an HE computation — labeled as such.
 - **Reproducibility:** fixed seed; each measurement runs **5 times after a discarded
-  warm-up**; mean ± std reported; full config + library versions + CPU saved to
+  warm-up** (sub-millisecond calls are batched per sample so the timer's noise floor does
+  not dominate); mean ± std reported; full config + library versions + CPU model saved to
   `results/run_config.json`.
 - **Memory** measured via **process RSS (psutil)**, not `tracemalloc`, because TenSEAL
-  ciphertexts live in C++ memory.
+  ciphertexts live in C++ memory. Per-op RSS deltas are treated as indicative only.
 
 ---
 
@@ -127,34 +129,42 @@ Hardware: the developer's machine inside Docker (`python:3.11-slim`). Numbers ar
 
 **CKKS, packed, by dataset size:**
 
-| N | encrypt | sum compute | decrypt | ciphertext size | mean rel. error (sum) |
+| N | encrypt | sum compute | result decrypt | ciphertext size | mean rel. error (sum) |
 |---|---|---|---|---|---|
-| 200 | ~3.1 ms | ~30 ms | ~0.7 ms | — | ~6e-10 |
+| 200 | ~3.1 ms | ~30 ms | ~1.0 ms | — | ~6e-10 |
 | 1,000 | ~2.8 ms | ~65 ms | ~0.7 ms | — | ~3e-10 |
 | 10,000 | ~8.7 ms | ~89 ms | ~0.7 ms | — | ~4e-11 |
 | 100,000 | ~74 ms | ~503 ms | ~0.7 ms | **8.36 MB** | ~2e-11 |
 
 **Key findings:**
-- **Packing dominates practicality.** Element-wise encryption is ~**200× slower** than
-  packed (≈580 ms vs ≈2.8 ms to encrypt at N=200).
+- **Packing dominates practicality.** Element-wise encryption is ~**180× slower** than
+  packed (≈530–570 ms vs ≈3.1 ms to encrypt at N=200) and ~200× larger.
 - **Size overhead:** at N=100,000 the CKKS encrypted dataset is **~8.36 MB vs ~0.8 MB
-  plaintext (~10.5×)**; AES adds only **28 bytes** (12-byte nonce + 16-byte GCM tag).
+  plaintext (~10.4×)**; AES adds only **28 bytes** (12-byte nonce + 16-byte GCM tag).
 - **Operation shape:** add/multiply are cheap (slot-wise); sum/average cost more because
-  `.sum()` needs ~log₂(slots) Galois rotations.
+  `.sum()` needs ~log₂(N) Galois rotations per ciphertext chunk.
 - **Accuracy:** CKKS relative error ranges ~**1.3e-7** (multiply/mean) down to **1e-11**
   (add) — small but non-zero, as CKKS requires. We report **both** relative and max
   absolute error: relative error is normalized by result magnitude (sum ≈ 5e6 vs mean ≈ 50),
   so sum's tiny relative figure is partly a normalization artifact — absolute error is the
   honest signal for aggregates.
-- **Baselines:** AES-256-GCM protects the whole dataset in ~0.02–0.19 ms (no compute);
-  RSA-2048-OAEP ~0.02 ms encrypt / ~0.2 ms decrypt **per record**, 256 bytes/record.
-- **Key/context overhead:** ~**34.6 MB** of public + Galois + relin keys, reported
-  separately from per-record ciphertext size.
+- **Depth limit (measured, `experiments/depth_sweep.py`):** with the `[60, 40, 40, 60]`
+  chain, ct×ct error grows from ~1.3e-7 (depth 1) to ~9.4e-7 (depth 2) and a third
+  sequential multiplication **fails outright** ("scale out of bounds" — modulus chain
+  exhausted). HE here is depth-limited, not merely slow.
+- **Baselines:** AES-256-GCM protects (encrypts + decrypts) the whole dataset in
+  ~0.02–0.33 ms depending on N (no compute); RSA-2048-OAEP ~0.02 ms encrypt / ~0.2 ms
+  decrypt **per record**, 256 bytes/record. These are microsecond-scale measurements near
+  the timer's noise floor; the harness batches such calls per timing sample.
+- **Key/context overhead:** ~**35.5 MB** (33.8 MiB) of public + Galois + relin keys,
+  reported separately from per-record ciphertext size.
 
-**Traditional-vs-HE analytics contrast** (the assignment's core comparison): computing
-`sum` over encrypted data costs ~0.16 ms the AES way (decrypt → compute, **plaintext
-exposed**) vs ~500 ms the HE way at N=100,000 (**never decrypted**) — HE is ~3000× slower,
-which is the measured price of never exposing the data during computation.
+**Traditional-vs-HE analytics contrast** (the assignment's core comparison), with both
+sides starting from data stored encrypted at rest: computing `sum` at N=100,000 costs
+~0.16 ms the AES way (decrypt → compute, **plaintext exposed**) vs ~503 ms the HE way
+steady-state (compute + result decrypt, **never decrypted**; ~576 ms one-shot including
+CKKS encryption) — HE is ~3,000× slower, which is the measured price of never exposing
+the data during computation.
 
 ---
 
@@ -176,8 +186,11 @@ approximate-decryption leakage caveat (Li–Micciancio 2021), mitigated by noise
 
 ## 10. Interactive app (Streamlit, 4 tabs)
 
-1. **Dashboard** — interactive charts + filterable table from `results.csv` (runtime,
-   packed vs element-wise, error, protection-vs-compute, memory), plus static figures.
+1. **Dashboard** — headline metric cards (incl. the fixed ~35 MB key cost), interactive
+   charts + filterable/downloadable table from `results.csv` (runtime ±std, packed vs
+   element-wise, error with a relative/absolute toggle, size overhead with inflation
+   ratios, error-vs-depth, encrypt/compute/decrypt breakdown per size,
+   protection-vs-compute), plus a run-config/environment panel.
 2. **Live HE demo** — choose operation / size / granularity / seed → encrypt → compute on
    ciphertext → decrypt → verify vs plaintext, showing per-phase timing and ciphertext size.
 3. **Confidential use case** — a salary-average scenario: values are encrypted, the server
@@ -197,16 +210,19 @@ feedback, focus rings, reduced-motion support).
 ## 11. Figures generated (`figures/`)
 
 `ckks_runtime_vs_size`, `ckks_cost_breakdown`, `ciphertext_size_vs_size`,
-`ckks_error_vs_size`, `protection_cost`, `packed_vs_elementwise`, `memory_vs_size`,
-`workflow_comparison` (+ `results/workflow_comparison.csv`).
+`ckks_error_vs_size`, `ckks_error_vs_depth`, `protection_cost`, `packed_vs_elementwise`,
+`workflow_comparison` (+ `results/workflow_comparison.csv`). No RSS-memory figure is
+generated — per-op RSS deltas are too noisy to plot responsibly.
 
 ---
 
 ## 12. Testing & verification
 
-- **15 tests pass** (`pytest`): CKKS correctness (packed + element-wise; sum/mean/add/mul;
-  chunking above one ciphertext), AES/RSA round-trips, security-profile invariants, and
-  **headless Streamlit `AppTest`** smoke tests that run the app and click the live-demo /
+- **21 tests pass** (`pytest`): CKKS correctness (packed + element-wise; sum/mean/add/mul;
+  chunking above one ciphertext; a multi-chunk vector round-trip that pins element
+  *order*), the measurement layer itself (warm-up discarding, sub-ms batch sizing,
+  sampler sanity), AES/RSA round-trips, security-profile invariants, and **headless
+  Streamlit `AppTest`** smoke tests that run the app and click the live-demo /
   use-case buttons.
 - Reproducible run: `docker compose run --rm benchmark` → CSV + run-config; verified across
   all four sizes with all operations correct.
@@ -219,8 +235,9 @@ feedback, focus rings, reduced-motion support).
 
 ```bash
 docker compose build
-docker compose run --rm benchmark pytest -v     # 15 tests
+docker compose run --rm benchmark pytest -v     # 21 tests
 docker compose run --rm benchmark               # -> results/results.csv + run_config.json
+docker compose run --rm benchmark python experiments/depth_sweep.py  # -> depth_sweep.json
 docker compose run --rm plots                   # -> figures/*.png
 docker compose up dashboard                      # http://localhost:8501
 ```
@@ -232,25 +249,29 @@ docker compose up dashboard                      # http://localhost:8501
 **Fully covered**
 - HE workflow (encrypt → compute on ciphertext → decrypt) with TenSEAL CKKS.
 - AES-256 + RSA-2048 baselines with fair framing.
-- Operations: add, multiply, sum, average (count as metadata).
-- Metrics: runtime (split into encrypt/compute/decrypt), ciphertext size, correctness +
-  approximation error, scalability to 100k, peak memory for all schemes.
-- Reproducibility (seed, repeats, config + environment captured), CSV output, 8 figures.
-- Security analysis + explicit traditional-vs-HE comparison.
+- Operations: add, multiply, sum, average (count as metadata) — plus a measured
+  error-vs-multiplicative-depth sweep with its failure point.
+- Metrics: runtime (split into encrypt/compute/decrypt, ±std), ciphertext size,
+  correctness + approximation error, scalability to 100k.
+- Reproducibility (seed, repeats, config + environment + CPU model captured), CSV output,
+  8 figures.
+- Security analysis + explicit traditional-vs-HE comparison (scenario stated: both sides
+  start from data encrypted at rest).
 - Interactive demo connecting to a confidential-computing use case.
+- The **written final report**: `report/FINAL_REPORT.md` (rendered to `.docx` by
+  `report/build_docx.js`).
 
 **Partial / limitations (stated honestly)**
-- **Peak-RSS memory is noisy** for short operations (page reuse makes per-op deltas
-  under-report); the **authoritative size/memory signal is `ciphertext_size_bytes`**. This
-  is documented in the README.
+- **Peak-RSS memory is indicative only** — meaningful on a cold first operation, near-zero
+  afterwards (page reuse); recorded in the CSV but not plotted. The **authoritative
+  size/memory signal is `ciphertext_size_bytes`** plus the fixed key/context size. This is
+  documented in the README.
 - **Data is synthetic** uniform floats, not a named real-world dataset.
 - **Element-wise granularity capped at 200 records** (it is O(N) large ciphertexts and OOMs
   the container at higher sizes) — documented; packed runs to 100k.
 - **CKKS only** — BFV (exact integer sum/count) is a documented planned follow-up, not built.
 
 **Not built yet (deliverables)**
-- A **written final report** (the measurements/figures/security content all exist; the
-  report document does not).
 - A **final presentation deck**.
 
 ---
@@ -263,5 +284,5 @@ docker compose up dashboard                      # http://localhost:8501
 3. Is the work **reproducible** (seeds, repeats, pinned environment, Docker)?
 4. Are **runtime, memory, ciphertext size, scalability, and security** all addressed?
 5. Are **limitations stated honestly** rather than hidden?
-6. Gaps to weigh: synthetic (not real) data; RSS-memory noise; CKKS-only; report/deck not
-   yet written.
+6. Gaps to weigh: synthetic (not real) data; RSS-memory noise; CKKS-only; presentation
+   deck not yet written.

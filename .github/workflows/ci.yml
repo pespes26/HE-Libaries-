@@ -16,3 +16,8 @@ jobs:
 
       - name: Run tests
         run: docker compose run --rm benchmark pytest -v
+
+      # results/results.csv is committed, so the full plotting path can be exercised
+      # as a cheap regression guard without re-running the benchmark.
+      - name: Generate figures from committed results
+        run: docker compose run --rm plots

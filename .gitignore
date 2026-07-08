@@ -9,3 +9,16 @@ __pycache__/
 # Generated outputs (figures/, results/) ARE committed as deliverable evidence.
 # Only ignore incidental local artifacts:
 report/FINAL_REPORT.pdf
+
+# MS Office owner/lock temp files (created while a .docx is open)
+~$*
+
+# Node (only used to regenerate the DOCX via report/build_docx.js)
+node_modules/
+package-lock.json
+package.json
+
+# Secrets + Claude local memory
+.env
+.env.*
+CLAUDE.local.md

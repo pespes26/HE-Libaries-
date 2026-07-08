@@ -109,13 +109,18 @@ Costs are separated into three buckets so no scheme is judged unfairly:
 2. **Computation** — HE on ciphertext vs. plaintext computation (measured separately).
 3. **Size overhead** — ciphertext vs. plaintext bytes.
 
-Each measurement runs **five times after a discarded warm-up**; we report the mean. Timing
-uses `perf_counter`; correctness is checked against the NumPy reference (exact equality for
+Each measurement runs **five times after a discarded warm-up**; we report the mean (the
+standard deviations are recorded in the CSV and shown as error bars in the figures). Timing
+uses `perf_counter`; sub-millisecond calls (AES, RSA, plaintext NumPy) sit near the timer's
+practical noise floor, so the harness times a batch of calls per sample and reports the
+per-call mean — small non-monotonicities across sizes in such microsecond figures should be
+read as jitter. Correctness is checked against the NumPy reference (exact equality for
 AES/RSA round-trips; tolerance for approximate CKKS). The full configuration, library
-versions, and CPU are written to a run-configuration JSON for reproducibility. RSA-2048-OAEP
-can encrypt at most ~190 bytes, so it cannot encrypt bulk data; it is measured **per single
-record** and reported as such, never as a bulk figure. `count` is plaintext metadata, not an
-HE computation, and is labelled accordingly.
+versions, and machine details are written to a run-configuration JSON for reproducibility
+(current runs also record the exact CPU model and RAM). RSA-2048-OAEP can encrypt at most
+~190 bytes, so it cannot encrypt bulk data; it is measured **per single record** and
+reported as such, never as a bulk figure. `count` is plaintext metadata, not an HE
+computation, and is labelled accordingly.
 
 ---
 
@@ -160,10 +165,14 @@ CKKS runtime (packed, mean over 5 runs), in milliseconds:
 
 Two patterns stand out. First, **encryption and aggregation dominate**: `sum` and `mean`
 are far more expensive than element-wise `add`/`multiply` because reducing across slots
-requires ~log₂(slots) Galois-key rotations, each costly. Second, the cost scales with the
-number of ciphertext chunks — at N = 100,000 the data occupies 25 ciphertexts, so per-chunk
-work multiplies. Decryption is cheap for a scalar result (~0.7 ms) but larger for a full
-vector result (~14–20 ms at N = 100,000).
+requires ~log₂(N) Galois-key rotations per ciphertext chunk, each costly. Second, the cost
+scales with the number of ciphertext chunks — at N = 100,000 the data occupies 25
+ciphertexts, so per-chunk work multiplies; the headline `sum` figure is 503 ± 20 ms
+(mean ± std over the five runs). Decryption is cheap for a scalar result (~0.7 ms) but
+larger for a full vector result (~14–20 ms at N = 100,000). A bookkeeping note: the
+timed totals count **one** dataset encryption — for the two-operand ops (add, multiply)
+the second operand is encrypted once outside the timed phase, so an end-to-end two-operand
+workflow would add roughly one more encryption.
 
 Note that `mean` is not independent of `sum`: it is computed as `sum` followed by a plaintext
 scalar multiply (mean = sum × 1/N), so its cost necessarily *includes* sum's. The two are
@@ -227,26 +236,29 @@ it does not run at all.
 
 ### 4.5 The headline: computing on encrypted data, traditional vs HE
 
-This is the comparison the project exists to make. To compute an aggregate (here, `sum`) over
-encrypted data:
+This is the comparison the project exists to make. **Scenario:** both sides start from data
+**stored encrypted at rest** under their own scheme. To compute an aggregate (here, `sum`)
+over that encrypted data:
 
 - **Traditional (AES):** decrypt the dataset → compute on plaintext → (re-encrypt result).
   The data is **exposed in plaintext** to the compute party during the computation.
-- **HE (CKKS):** compute directly on the ciphertext. The data is **never exposed**.
+- **HE (CKKS), steady-state:** compute directly on the ciphertext, decrypt only the result.
+  The data is **never exposed**. (A *one-shot* variant additionally pays the CKKS
+  encryption of the dataset — the first upload to an untrusted cloud.)
 
 At **N = 100,000**:
 
 | Workflow | Time for `sum` | Plaintext exposed during compute? |
 | --- | --- | --- |
 | AES: decrypt + compute | **~0.16 ms** | **Yes** |
-| HE: compute on ciphertext | **~500 ms** (≈576 ms end-to-end incl. encrypt+decrypt) | **No** |
+| HE steady-state: compute + result decrypt | **~503 ms** (≈576 ms one-shot incl. CKKS encryption) | **No** |
 
 HE is roughly **3,000× slower** for this task. That number is meaningless without its other
 half: the HE result was produced **without the compute party ever seeing the data.** The cost
 *is* the security property.
 
-*[Figure: workflow_comparison.png — analytics cost: AES (decrypt+compute) vs HE (on ciphertext).]*
-*[Figure: protection_cost.png — data-protection cost: CKKS vs AES vs RSA (per record).]*
+*[Figure: workflow_comparison.png — analytics cost: AES (decrypt+compute) vs HE steady-state and one-shot.]*
+*[Figure: protection_cost.png — whole-dataset encrypt+decrypt cost: CKKS vs AES, plus RSA for a single record.]*
 
 ---
 
@@ -291,15 +303,20 @@ enough for such analytics.
    for 200 records the keys dwarf the data ~100×.
 2. **Packing is mandatory.** Without batching, both time and size blow up ~200×; element-wise
    use is effectively unusable.
-3. **HE is depth-limited, not merely slow.** Our parameter chain `[60, 40, 40, 60]` provides
-   roughly two rescaling levels, i.e. support for only about **one to two sequential
-   multiplications** before the noise budget is exhausted. Deeper circuits require
-   *bootstrapping* (an expensive noise-refresh) or larger parameters (more cost and memory).
-   Our benchmark deliberately stays within this budget — single multiplications — which is
-   why the multiply error stays at ~10⁻⁷ rather than diverging. The take-away is that HE's
-   real constraint is not only runtime but **circuit depth**: it suits shallow analytics
-   (sums, averages, single products), not arbitrary deep computation, without further
-   machinery.
+3. **HE is depth-limited, not merely slow — and we measured the limit.** Our parameter
+   chain `[60, 40, 40, 60]` provides two rescaling levels. A dedicated experiment
+   (`experiments/depth_sweep.py`, repeated ciphertext-squaring of unit-scale values)
+   confirms it empirically: the mean relative error is **~1.3 × 10⁻⁷ after one
+   multiplication**, grows ~7× to **~9.4 × 10⁻⁷ after two**, and a **third sequential
+   multiplication fails outright** ("scale out of bounds" — the modulus chain is
+   exhausted). Deeper circuits require *bootstrapping* (an expensive noise-refresh) or
+   larger parameters (more cost and memory). Our benchmark deliberately stays within this
+   budget — single multiplications — which is why the multiply error stays at ~10⁻⁷ rather
+   than diverging. The take-away is that HE's real constraint is not only runtime but
+   **circuit depth**: it suits shallow analytics (sums, averages, single products), not
+   arbitrary deep computation, without further machinery.
+
+*[Figure: ckks_error_vs_depth.png — measured CKKS error per multiplicative depth, and the depth-3 failure.]*
 
 ---
 
@@ -309,10 +326,12 @@ enough for such analytics.
   dataset. The pipeline is dataset-agnostic; substituting a real numeric dataset is
   straightforward and is future work.
 - **Process memory not reported as a headline.** We sampled process resident-set size (RSS)
-  per operation, but RSS deltas are unreliable for short operations (freed pages are reused,
-  so later operations read near-zero). Rather than present a number we do not trust, we treat
-  **ciphertext size plus the fixed key/context size** as the authoritative memory signal and
-  exclude the RSS chart from the body.
+  per operation — via psutil rather than `tracemalloc`, since TenSEAL allocates in C++
+  memory that `tracemalloc` cannot see — but RSS deltas are unreliable for short operations
+  (freed pages are reused, so later operations read near-zero). Rather than present a number
+  we do not trust, we treat **ciphertext size plus the fixed key/context size** as the
+  authoritative memory signal; the raw RSS column stays in the CSV, and no RSS figure is
+  generated.
 - **CKKS only.** We did not implement BFV/BGV. Exact integer `sum`/`count` under BFV would
   complement CKKS's approximate real arithmetic and is the most natural next step.
 - **Element-wise capped at N ≈ 200.** Element-wise encryption exhausts container memory above
@@ -327,8 +346,9 @@ AES-256/RSA-2048 baselines, verifies every HE result against a plaintext referen
 measures runtime, ciphertext size, approximation error, and scalability to 100,000 records.
 The central, honest finding is that HE buys a capability the baselines lack — computation on
 encrypted data, with data never exposed in use — at a measured cost of roughly three orders
-of magnitude in time, ~10× in ciphertext size, a fixed ~34 MB of keys, and a hard limit of
-~1–2 multiplications before bootstrapping. Whether that trade is acceptable depends entirely
+of magnitude in time, ~10× in ciphertext size, a fixed ~34 MB of keys, and a measured hard
+limit of two multiplications before the modulus chain is exhausted (bootstrapping or larger
+parameters would be needed beyond that). Whether that trade is acceptable depends entirely
 on whether protecting data *in use* is a requirement.
 
 **Future work:** add BFV for exact integer aggregation; benchmark a real public numeric
@@ -358,14 +378,16 @@ evaluate GPU-accelerated HE backends.
 
 ```bash
 docker compose build
-docker compose run --rm benchmark pytest -v     # 15 tests
+docker compose run --rm benchmark pytest -v     # 21 tests
 docker compose run --rm benchmark               # -> results/results.csv + run_config.json
+docker compose run --rm benchmark python experiments/depth_sweep.py  # -> depth_sweep.json
 docker compose run --rm plots                   # -> figures/*.png
 docker compose up dashboard                      # interactive UI at http://localhost:8501
 ```
 
 All numbers in this report are derived from `results/results.csv` (48 rows: every
-scheme × operation × dataset size, mean of 5 repeats after a warm-up). CKKS parameters and
+scheme × operation × dataset size, mean of 5 repeats after a warm-up) and
+`results/depth_sweep.json` (the error-vs-depth experiment). CKKS parameters and
 environment are recorded in `results/run_config.json`.
 
 ## Appendix B — Baseline reference numbers
@@ -374,3 +396,7 @@ environment are recorded in `results/run_config.json`.
   0.033 ms (10k), 0.330 ms (100k); ciphertext size = N × 8 + 28 bytes.
 - **RSA-2048-OAEP**, per single 8-byte record: ~0.02 ms encrypt, ~0.20 ms decrypt; ciphertext
   256 bytes per record. Bulk data would use hybrid encryption (RSA wraps an AES key).
+- *Reading these numbers:* they are microseconds, near `perf_counter`'s practical noise
+  floor at five repeats — the non-monotonicity across sizes (1k faster than 200) is timing
+  jitter, not a real effect. The measurement harness now batches sub-millisecond calls per
+  timing sample to suppress exactly this.

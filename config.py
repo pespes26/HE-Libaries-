@@ -29,9 +29,12 @@ CKKS_COEFF_MOD_BIT_SIZES = [60, 40, 40, 60]
 CKKS_GLOBAL_SCALE = 2 ** 40
 CKKS_SLOTS = CKKS_POLY_MODULUS_DEGREE // 2  # packing capacity per ciphertext
 
-# Correctness tolerances for the *approximate* CKKS scheme.
-CKKS_REL_TOL = 1e-2
-CKKS_ABS_TOL = 1e-1
+# Correctness tolerances for the *approximate* CKKS scheme. The committed run measures
+# at most ~1.3e-3 absolute error (ct x ct multiply on values up to ~1e4) and ~1.4e-7
+# relative error; these bounds sit 2-3 orders of magnitude above that, so they catch a
+# real precision regression without ever flaking on normal CKKS noise.
+CKKS_REL_TOL = 1e-4
+CKKS_ABS_TOL = 1e-2
 
 # --- Encryption granularities for HE ---
 # "packed"      : whole dataset batched into ceil(N / slots) ciphertexts (idiomatic, fast).

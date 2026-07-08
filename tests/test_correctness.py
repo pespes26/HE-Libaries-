@@ -76,6 +76,37 @@ def test_ckks_chunking_above_one_ciphertext(ctx):
     assert abs(got - expected) / abs(expected) < 1e-3
 
 
+def test_ckks_multichunk_vector_roundtrip_preserves_order(ctx):
+    """Element-wise ops across >1 chunk must keep every element in its original position.
+
+    `sum` is order-invariant, so the chunking test above cannot catch a swapped or
+    reversed chunk in encrypt_packed/decrypt_vectors; an element-wise comparison of a
+    two-chunk `add` against the exact reference can (the data is random, so any
+    reordering breaks closeness).
+    """
+    n = config.CKKS_SLOTS + 100
+    a = data_mod.generate_synthetic(n, seed=11)
+    b = data_mod.generate_synthetic(n, seed=12)
+    ea = he_ckks.encrypt_packed(ctx, a)
+    eb = he_ckks.encrypt_packed(ctx, b)
+    assert len(ea) == 2
+    got = he_ckks.decrypt_vectors(he_ckks.he_add(ea, eb))
+    assert got.shape == (n,)
+    assert np.allclose(got, ref.ref_add(a, b), **TOL)
+
+
+def test_ckks_elementwise_add_mul(ctx):
+    """The element-wise granularity must round-trip add/mul too (not only sum/mean)."""
+    a = data_mod.generate_synthetic(8, seed=3)
+    b = data_mod.generate_synthetic(8, seed=4)
+    ea = he_ckks.encrypt_elementwise(ctx, a)
+    eb = he_ckks.encrypt_elementwise(ctx, b)
+    assert np.allclose(he_ckks.decrypt_vectors(he_ckks.he_add(ea, eb)),
+                       ref.ref_add(a, b), **TOL)
+    assert np.allclose(he_ckks.decrypt_vectors(he_ckks.he_mul(ea, eb)),
+                       ref.ref_mul(a, b), **TOL)
+
+
 # --- AES / RSA (exact) -----------------------------------------------------------
 
 def test_aes_roundtrip(data):
