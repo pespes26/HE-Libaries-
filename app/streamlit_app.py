@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit_antd_components as sac
 
 # Make the project root importable when Streamlit runs this file directly.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -296,6 +297,49 @@ def compute_ref(op, a, b):
 
 def hex_preview(raw: bytes, n: int = 48) -> str:
     return raw[:n].hex(" ") + (" ..." if len(raw) > n else "")
+
+
+def parse_values(raw: str, cap: int | None = None) -> np.ndarray:
+    """Parse comma-separated floats; drop blanks/non-finite; optionally cap the count.
+
+    Shared by the confidential use-case demos that take user-typed private values.
+    """
+    try:
+        vals = np.array([float(x) for x in raw.split(",") if x.strip() != ""],
+                        dtype=np.float64)
+    except ValueError:
+        st.error("Could not parse the values. Use comma-separated numbers.")
+        return np.array([], dtype=np.float64)
+    if vals.size and not np.all(np.isfinite(vals)):
+        st.warning("Dropped non-finite values (inf/nan).")
+        vals = vals[np.isfinite(vals)]
+    if cap is not None and vals.size > cap:
+        st.warning(f"Using the first {cap} values (demo cap).")
+        vals = vals[:cap]
+    return vals
+
+
+def render_case_result(key, pipeline, watcher, hex_lines, metrics, tags, verdict, diff):
+    """Shared result panel for the confidential use-case demos.
+
+    Renders (with Ant Design chrome): the encrypt -> compute -> decrypt `sac.steps`
+    pipeline, the "what the server sees" ciphertext hex block, a native `st.metric` row,
+    status `sac.tags`, a `sac.result` success verdict, and the "vs traditional" caption.
+    `pipeline` is [(title, description), ...]; `metrics` is [(label, value[, help]), ...];
+    `tags` is [(label, color), ...].
+    """
+    sac.steps(items=[sac.StepsItem(title=t, description=d) for t, d in pipeline],
+              index=len(pipeline) - 1, size="sm", color="#34D399", key=f"{key}_steps")
+    st.markdown(f"**{watcher}**")
+    st.code("\n".join(hex_lines), language="text")
+    cols = st.columns(len(metrics))
+    for col, m in zip(cols, metrics):
+        col.metric(m[0], m[1], help=(m[2] if len(m) > 2 else None))
+    if tags:
+        sac.tags([sac.Tag(label=lbl, color=color) for lbl, color in tags],
+                 key=f"{key}_tags")
+    sac.result(label=verdict, status="success", key=f"{key}_result")
+    st.caption(diff)
 
 
 # --- Plotly theming (emerging-tech, dark) ----------------------------------------
@@ -857,61 +901,182 @@ with tab_live:
 # Tab 3 — Confidential use case
 # =================================================================================
 with tab_case:
-    st.subheader("Confidential analytics: average without revealing individuals")
-    st.markdown(
-        "**Scenario.** A team wants the *average* of private salaries, but no one — not "
-        "even the analytics server — should see any individual salary. With HE, each "
-        "value is encrypted on the client; the server computes the average **on the "
-        "ciphertexts** and returns an encrypted result that only the client can decrypt."
-    )
+    st.subheader("Confidential computing: what HE does that plaintext can't")
+    st.caption("Four confidential-computing use cases on synthetic data. Each encrypts "
+               "private inputs, computes on the ciphertext, and reveals only the aggregate "
+               "— so you see what the server sees (ciphertext) vs. the decrypted result.")
 
-    default = "3200, 4100, 2750, 5300, 3900, 4600, 3100, 4800"
-    MAX_VALUES = config.ELEMENTWISE_MAX_SIZE  # each value -> its own ciphertext (O(N) memory)
-    raw = st.text_area("Private values (comma-separated)", value=default, height=80)
-    try:
-        values = np.array([float(x.strip()) for x in raw.split(",") if x.strip() != ""],
-                          dtype=np.float64)
-    except ValueError:
-        st.error("Could not parse the values. Use comma-separated numbers.")
-        values = np.array([], dtype=np.float64)
-    # Guard the demo: reject non-finite values and cap the count so a large paste
-    # cannot exhaust memory (every value is encrypted as a separate ciphertext).
-    if values.size and not np.all(np.isfinite(values)):
-        st.warning("Dropped non-finite values (inf/nan).")
-        values = values[np.isfinite(values)]
-    if values.size > MAX_VALUES:
-        st.warning(f"Using the first {MAX_VALUES} values (demo cap).")
-        values = values[:MAX_VALUES]
+    SCENARIOS = ["Private aggregate statistics", "Cross-organization pooling",
+                 "Encrypted weighting / scoring", "Outsourced cloud analytics"]
+    scenario = sac.segmented(items=SCENARIOS, index=0, size="sm", color="#34D399",
+                             use_container_width=True, key="case_scenario") or SCENARIOS[0]
 
-    if st.button("Encrypt and compute the average homomorphically", type="primary") \
-            and values.size > 0:
-        ctx = get_context()
-        # Encrypt each value separately so we can show the server only sees ciphertext.
-        enc = he_ckks.encrypt_elementwise(ctx, values)
+    # --- Scenario 1: private aggregate statistics (encrypt each value; hide individuals) ---
+    if scenario == SCENARIOS[0]:
+        st.markdown(
+            "**Scenario.** A team wants the *average* of private salaries, but no one — not "
+            "even the analytics server — should see any individual salary. Each value is "
+            "encrypted on the client; the server computes on the ciphertexts and returns an "
+            "encrypted aggregate only the client can decrypt.")
+        raw = st.text_area("Private salaries (comma-separated)",
+                           value="3200, 4100, 2750, 5300, 3900, 4600, 3100, 4800",
+                           height=80, key="case_agg_input")
+        values = parse_values(raw, cap=config.ELEMENTWISE_MAX_SIZE)
+        if st.button("Encrypt and compute the average homomorphically", type="primary",
+                     key="case_agg_run") and values.size > 0:
+            ctx = get_context()
+            enc = he_ckks.encrypt_elementwise(ctx, values)
+            he_avg = he_ckks.decrypt_scalar(he_ckks.he_mean(enc, len(values)))
+            he_total = he_ckks.decrypt_scalar(he_ckks.he_sum(enc))
+            true_avg = float(np.mean(values))
+            render_case_result(
+                key="agg",
+                pipeline=[("Encrypt", "each salary -> its own ciphertext"),
+                          ("Compute", "sum & mean on ciphertext"),
+                          ("Decrypt", "only the aggregate")],
+                watcher="What the server stores (ciphertext, not the salaries):",
+                hex_lines=[f"record {i}: {hex_preview(enc[i].serialize())}"
+                           for i in range(min(4, len(enc)))]
+                          + (["..."] if len(enc) > 4 else []),
+                metrics=[("Records (kept private)", f"{len(values)}"),
+                         ("Average (decrypted)", f"{he_avg:,.2f}"),
+                         ("Total (decrypted)", f"{he_total:,.0f}"),
+                         ("Error vs plaintext", f"{abs(he_avg - true_avg):.2e}")],
+                tags=[("computed on ciphertext", "green"),
+                      ("individuals never decrypted", "green")],
+                verdict="The server computed the average on encrypted data — individual "
+                        f"salaries were never decrypted. Plaintext check: true average = "
+                        f"{true_avg:,.2f}.",
+                diff="Traditional analytics needs every salary in the clear on the server; "
+                     "HE returns the average while each salary stays encrypted.")
 
-        st.markdown("**What the server stores (ciphertext, not the values):**")
-        st.code("\n".join(
-            f"record {i}: {hex_preview(enc[i].serialize())}"
-            for i in range(min(4, len(enc)))
-        ) + ("\n..." if len(enc) > 4 else ""), language="text")
-
-        # Compute the mean entirely on ciphertext, then decrypt only the aggregate.
-        enc_mean = he_ckks.he_mean(enc, len(values))
-        he_avg = he_ckks.decrypt_scalar(enc_mean)
-        true_avg = float(np.mean(values))
-
+    # --- Scenario 2: cross-organization pooling ---
+    elif scenario == SCENARIOS[1]:
+        st.markdown(
+            "**Scenario.** Three hospitals want the *combined average* of their private "
+            "per-patient billing amounts — without any hospital revealing its records to "
+            "the others or to the coordinator. Each encrypts its data; the coordinator sums "
+            "the ciphertexts and decrypts only the pooled aggregate.")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Records (kept private)", len(values))
-        c2.metric("Average (decrypted result)", f"{he_avg:,.2f}")
-        c3.metric("Error vs plaintext", f"{abs(he_avg - true_avg):.2e}")
+        n1 = c1.number_input("Hospital A records", 1, 500, 40, key="case_pool_n1")
+        n2 = c2.number_input("Hospital B records", 1, 500, 65, key="case_pool_n2")
+        n3 = c3.number_input("Hospital C records", 1, 500, 50, key="case_pool_n3")
+        if st.button("Pool encrypted contributions", type="primary", key="case_pool_run"):
+            ctx = get_context()
+            arrs = [data_mod.generate_synthetic(int(n), config.RANDOM_SEED + k,
+                                                config.DATA_LOW, config.DATA_HIGH)
+                    for k, n in enumerate((n1, n2, n3), start=1)]
+            encs = [he_ckks.encrypt_packed(ctx, a) for a in arrs]
+            pooled = encs[0] + encs[1] + encs[2]        # list concat = combined dataset
+            total_n = sum(len(a) for a in arrs)
+            grand = he_ckks.decrypt_scalar(he_ckks.he_sum(pooled))
+            avg = he_ckks.decrypt_scalar(he_ckks.he_mean(pooled, total_n))
+            true_grand = float(sum(a.sum() for a in arrs))
+            render_case_result(
+                key="pool",
+                pipeline=[("Encrypt", "each org encrypts locally"),
+                          ("Pool", "coordinator sums ciphertexts"),
+                          ("Decrypt", "only the joint aggregate")],
+                watcher="What the coordinator sees (each org's first ciphertext chunk):",
+                hex_lines=[f"hospital {chr(65 + k)}: {hex_preview(e[0].serialize())}"
+                           for k, e in enumerate(encs)],
+                metrics=[("Records pooled", f"{total_n}"),
+                         ("Joint average", f"{avg:,.2f}"),
+                         ("Grand total", f"{grand:,.0f}"),
+                         ("Rel. error", f"{abs(grand - true_grand) / abs(true_grand):.2e}")],
+                tags=[("no raw data shared", "green"),
+                      ("no per-org subtotal exposed", "green")],
+                verdict="The coordinator computed the joint average across three hospitals "
+                        "without seeing any hospital's records. Plaintext check: true grand "
+                        f"total = {true_grand:,.0f}.",
+                diff="Traditionally every org hands raw records to a trusted coordinator; "
+                     "with HE the coordinator sums encrypted contributions and sees nothing.")
 
-        st.success(
-            "The server computed the average on encrypted data. Individual values were "
-            "never decrypted server-side — only the final aggregate was revealed to the "
-            f"client. (Plaintext check: true average = {true_avg:,.2f}.)"
-        )
-        st.caption("This is the capability AES and RSA do not provide: useful computation "
-                   "while the data stays encrypted.")
+    # --- Scenario 3: encrypted weighting / scoring (single homomorphic multiply) ---
+    elif scenario == SCENARIOS[2]:
+        st.markdown(
+            "**Scenario.** A service computes a *risk score* = weighted sum of a person's "
+            "private features x model weights, **without ever seeing the raw features**. "
+            "The score is a dot product on ciphertext — one homomorphic multiply.")
+        cf, cw = st.columns(2)
+        fraw = cf.text_area("Private features (comma-separated)",
+                            value="0.80, 0.60, 0.90, 0.40", height=80, key="case_score_feat")
+        wraw = cw.text_area("Model weights (comma-separated)",
+                            value="0.40, 0.20, 0.30, 0.10", height=80, key="case_score_w")
+        feats = parse_values(fraw, cap=config.ELEMENTWISE_MAX_SIZE)
+        weights = parse_values(wraw, cap=config.ELEMENTWISE_MAX_SIZE)
+        if st.button("Encrypt and score homomorphically", type="primary",
+                     key="case_score_run"):
+            if feats.size == 0 or feats.size != weights.size:
+                st.error("Enter the same number of features and weights.")
+            else:
+                ctx = get_context()
+                ef = he_ckks.encrypt_elementwise(ctx, feats)
+                ew = he_ckks.encrypt_elementwise(ctx, weights)
+                score = he_ckks.decrypt_scalar(he_ckks.he_dot(ef, ew))
+                true_score = ref.ref_dot(feats, weights)
+                render_case_result(
+                    key="score",
+                    pipeline=[("Encrypt", "features & weights encrypted"),
+                              ("Multiply", "features x weights on ciphertext"),
+                              ("Sum & decrypt", "only the final score")],
+                    watcher="What the scoring server sees (encrypted features):",
+                    hex_lines=[f"feature {i}: {hex_preview(ef[i].serialize())}"
+                               for i in range(min(4, len(ef)))]
+                              + (["..."] if len(ef) > 4 else []),
+                    metrics=[("Features (kept private)", f"{feats.size}"),
+                             ("Score (decrypted)", f"{score:,.4f}"),
+                             ("Error vs plaintext", f"{abs(score - true_score):.2e}")],
+                    tags=[("1 homomorphic multiply", "cyan"),
+                          ("features never decrypted", "green")],
+                    verdict="The server returned the score without decrypting a single "
+                            f"feature. Plaintext check: true score = {true_score:,.4f}.",
+                    diff="Traditional scoring services see your raw features; HE returns "
+                         "only the score while the features stay encrypted end-to-end.")
+                st.caption("Honest note: both operands are encrypted here because the only "
+                           "multiply available is ciphertext x ciphertext; a real deployment "
+                           "can hold the weights in plaintext.")
+
+    # --- Scenario 4: outsourced cloud analytics ---
+    else:
+        st.markdown(
+            "**Scenario.** A company offloads analytics of a large private dataset to an "
+            "**untrusted public cloud that never holds the decryption key**. The client "
+            "uploads ciphertext; the cloud computes the aggregate on it and returns an "
+            "encrypted result only the client can open.")
+        size = st.slider("Dataset size (records)", 100, 5000, 2000, step=100,
+                         key="case_cloud_size")
+        if st.button("Upload encrypted & compute in the cloud", type="primary",
+                     key="case_cloud_run"):
+            ctx = get_context()
+            arr = data_mod.generate_synthetic(int(size), config.RANDOM_SEED + 10,
+                                              config.DATA_LOW, config.DATA_HIGH)
+            enc = he_ckks.encrypt_packed(ctx, arr)
+            avg = he_ckks.decrypt_scalar(he_ckks.he_mean(enc, len(arr)))
+            true_avg = float(np.mean(arr))
+            ct_kb = he_ckks.ciphertext_size_bytes(enc) / 1024
+            ctx_mb = (load_run_config() or {}).get("ckks_context_size_bytes")
+            render_case_result(
+                key="cloud",
+                pipeline=[("Encrypt", "client packs the dataset"),
+                          ("Cloud compute", "sum & mean on ciphertext"),
+                          ("Decrypt", "client opens the result")],
+                watcher="What the cloud sees (ciphertext chunks + public keys, no secret key):",
+                hex_lines=[f"chunk {i}: {hex_preview(enc[i].serialize())}"
+                           for i in range(min(3, len(enc)))]
+                          + (["..."] if len(enc) > 3 else []),
+                metrics=[("Records", f"{len(arr):,}"),
+                         ("Average (decrypted)", f"{avg:,.2f}"),
+                         ("Ciphertext uploaded",
+                          f"{ct_kb / 1024:.2f} MB" if ct_kb > 1024 else f"{ct_kb:.0f} KB"),
+                         ("Fixed public keys",
+                          f"{ctx_mb / 1e6:.0f} MB" if ctx_mb else "~34 MB")],
+                tags=[("cloud can't read the data", "green"),
+                      ("secret key stays with client", "green")],
+                verdict=f"The cloud computed the average over {len(arr):,} encrypted records "
+                        f"and never saw a value. Plaintext check: true average = {true_avg:,.2f}.",
+                diff="With AES the cloud must decrypt to compute (plaintext/key leaves your "
+                     "control); with HE it computes on ciphertext and can never read the data.")
 
 
 # =================================================================================
@@ -923,11 +1088,16 @@ with tab_sec:
     sec_df = pd.DataFrame(profiles).set_index("scheme").T
     st.dataframe(sec_df, use_container_width=True)
 
+    sac.tags([sac.Tag(label="AES/RSA: data exposed in use", color="red"),
+              sac.Tag(label="CKKS/HE: encrypted in use", color="green"),
+              sac.Tag(label="CKKS/HE: post-quantum (RLWE)", color="cyan")],
+             key="sec_tags")
+
     st.markdown("**Key takeaways**")
     for t in security.key_takeaways():
         st.markdown(f"- {t}")
 
-    st.divider()
+    sac.divider(label="Traditional (AES) vs HE", color="gray", key="sec_divider")
     st.subheader("Computing on encrypted data: traditional (AES) vs HE")
     st.markdown(
         "To analyze **AES**-protected data you must **decrypt it first** — the plaintext is "

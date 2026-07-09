@@ -64,6 +64,17 @@ def test_ckks_mul(ctx, data, data2):
     assert np.allclose(got, ref.ref_mul(data, data2), **TOL)
 
 
+@pytest.mark.parametrize("granularity", ["packed", "elementwise"])
+def test_ckks_dot(ctx, data, data2, granularity):
+    """Dot product = ct x ct multiply (depth 1) then sum -> scalar; powers weighted scoring."""
+    enc = he_ckks.encrypt_packed if granularity == "packed" else he_ckks.encrypt_elementwise
+    ea, eb = enc(ctx, data), enc(ctx, data2)
+    got = he_ckks.decrypt_scalar(he_ckks.he_dot(ea, eb))
+    expected = ref.ref_dot(data, data2)
+    # dot of two [0,100) vectors is ~10^5, so use a relative bound (like the chunking test).
+    assert abs(got - expected) / abs(expected) < 1e-3
+
+
 def test_ckks_chunking_above_one_ciphertext(ctx):
     """A dataset larger than one ciphertext's slots must still sum correctly."""
     big = data_mod.generate_synthetic(config.CKKS_SLOTS + 100, seed=7)

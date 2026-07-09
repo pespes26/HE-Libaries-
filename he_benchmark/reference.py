@@ -15,6 +15,11 @@ def ref_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return a * b
 
 
+def ref_dot(a: np.ndarray, b: np.ndarray) -> float:
+    """Dot product / weighted sum -- the ground truth for he_dot."""
+    return float(np.dot(a, b))
+
+
 def ref_sum(a: np.ndarray) -> float:
     return float(np.sum(a))
 

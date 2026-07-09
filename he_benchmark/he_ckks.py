@@ -76,6 +76,16 @@ def he_mean(a: List, n: int):
     return he_sum(a) * (1.0 / n)
 
 
+def he_dot(a: List, b: List):
+    """Dot product / weighted sum of two encrypted vectors -> length-1 CKKSVector.
+
+    Element-wise ciphertext x ciphertext multiply (one multiplicative level, depth 1 --
+    well within the [60,40,40,60] chain's measured 2-level budget), then sum across all
+    slots/chunks. Powers the encrypted-weighting/scoring use case.
+    """
+    return he_sum(he_mul(a, b))
+
+
 # --- Decryption ------------------------------------------------------------------
 
 def decrypt_vectors(vectors: List) -> np.ndarray:
