@@ -1,13 +1,13 @@
-# Bar's Design Signature — light mode (warm sand).
-# Warm-neutral palette with teal accent; fonts + pills + mono details + motion are added
-# via injected CSS in app/streamlit_app.py (Streamlit's built-in theme cannot set fonts).
+# Emerging-tech style — dark OLED. Deep-slate canvas, elevated surfaces, electric-emerald
+# accent. Fonts (Fira Code / Fira Sans), glow, grid backdrop and motion are layered via
+# injected CSS in app/streamlit_app.py (Streamlit's built-in theme cannot set fonts/effects).
 [theme]
-base = "light"
-primaryColor = "#00A19B"            # accent (teal)
-backgroundColor = "#E4DDD3"         # page background (warm sand)
-secondaryBackgroundColor = "#F0EBE3" # surface 1 (cards, sidebar, widgets)
-textColor = "#1a1814"               # text primary
-font = "sans serif"
+base = "dark"
+primaryColor = "#34D399"            # accent (electric emerald)
+backgroundColor = "#0F172A"         # page canvas (deep slate)
+secondaryBackgroundColor = "#1E293B" # surface 1 (cards, sidebar, widgets)
+textColor = "#F8FAFC"               # text primary
+font = "monospace"
 
 [browser]
 gatherUsageStats = false

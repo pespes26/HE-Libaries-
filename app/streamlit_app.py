@@ -36,47 +36,64 @@ from he_benchmark import security  # noqa: E402
 
 st.set_page_config(page_title="Benchmarking Homomorphic Encryption", layout="wide")
 
-# --- Bar's Design Signature (LIGHT, warm sand) + a richer motion layer.
-#     Signature = Ubuntu fonts, pill buttons, mono technical labels, layered surfaces.
-#     Motion    = lively but coherent: staggered card/chart entrance, hover lift + soft
-#                 shadow, press feedback, focus rings, animated tabs. transform/opacity
-#                 only (GPU); fully disabled under prefers-reduced-motion.
+# --- Emerging-tech style (DARK / OLED) + the same coherent motion layer.
+#     Look   = deep-slate canvas with a faint grid + emerald/cyan glow, Fira Code/Sans
+#              type, electric-emerald accent, minimal glow, glassy elevated surfaces.
+#     Motion = lively but coherent: staggered card/chart entrance, hover lift + glow,
+#              press feedback, focus rings, animated tabs. transform/opacity only (GPU);
+#              fully disabled under prefers-reduced-motion.
 #     Base palette comes from .streamlit/config.toml. ---
 _DESIGN_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&family=Ubuntu+Mono:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
 
 :root {
-  /* Light / warm-sand palette */
-  --bg:#E4DDD3; --s1:#F0EBE3; --s2:#E9E2D8; --s3:#DDD5C9; --b1:#D4CCC0; --b2:#C0B8AA;
-  --tp:#1a1814; --ts:#5c574e; --tm:#9c9589;
-  --accent:#00A19B; --accent-bd:rgba(0,161,155,0.45);
+  /* Dark / deep-slate emerging-tech palette */
+  --bg:#0F172A; --s1:#1E293B; --s2:#172033; --s3:#0B1220; --b1:#2A3852; --b2:#3B4C6B;
+  --tp:#F8FAFC; --ts:#94A3B8; --tm:#64748B;
+  --accent:#34D399; --accent-2:#38BDF8;
+  --accent-bd:rgba(52,211,153,0.55); --accent-soft:rgba(52,211,153,0.14);
+  --glow:0 0 10px rgba(52,211,153,0.55);
   /* Motion tokens: strong custom ease-out; never ease-in */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --d-fast: 120ms; --d: 180ms; --d-slow: 340ms;
-  --shadow: 0 2px 12px rgba(0,0,0,0.10);
-  --shadow-lg: 0 8px 28px rgba(0,0,0,0.14);
+  --shadow: 0 2px 14px rgba(0,0,0,0.45);
+  --shadow-lg: 0 10px 34px rgba(0,0,0,0.55);
+  --shadow-glow: 0 8px 28px rgba(0,0,0,0.5), 0 0 0 1px var(--accent-bd), 0 0 22px rgba(52,211,153,0.20);
 }
 
-/* Base font: Ubuntu everywhere */
-html, body, .stApp, [data-testid="stAppViewContainer"], [class*="css"] {
-  font-family:'Ubuntu', ui-sans-serif, system-ui, sans-serif;
+/* Emerging-tech backdrop: emerald + cyan glow washes over a faint technical grid */
+[data-testid="stAppViewContainer"] {
+  background:
+    radial-gradient(1200px 620px at 12% -12%, rgba(52,211,153,0.10), transparent 60%),
+    radial-gradient(1000px 540px at 100% 0%, rgba(56,189,248,0.08), transparent 55%),
+    linear-gradient(rgba(148,163,184,0.045) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(90deg, rgba(148,163,184,0.045) 1px, transparent 1px) 0 0 / 44px 44px,
+    var(--bg);
 }
-h1,h2,h3,h4 { font-family:'Ubuntu', sans-serif; letter-spacing:-0.01em; font-weight:500; color:var(--tp); }
-h1 { font-weight:700; }
-/* Section headers: accent tick + quiet divider, animated in */
+[data-testid="stHeader"] { background: transparent; }
+
+/* Base font: Fira Sans everywhere */
+html, body, .stApp, [data-testid="stAppViewContainer"], [class*="css"] {
+  font-family:'Fira Sans', ui-sans-serif, system-ui, sans-serif;
+}
+h1,h2,h3,h4 { font-family:'Fira Sans', sans-serif; letter-spacing:-0.01em; font-weight:600; color:var(--tp); }
+h1 { font-weight:700; text-shadow: 0 0 18px rgba(52,211,153,0.28); }
+/* Section headers: glowing accent tick + quiet divider, animated in */
 h2, h3 {
   padding:2px 0 6px 12px; border-bottom:1px solid var(--b1);
   border-left:3px solid var(--accent); margin-left:-12px; padding-left:12px;
+  box-shadow: -3px 0 12px -4px var(--accent-bd);
   animation: slideIn var(--d-slow) var(--ease-out) both;
 }
 
-/* Technical content -> Ubuntu Mono */
-code, kbd, pre, samp { font-family:'Ubuntu Mono', ui-monospace, monospace !important; }
+/* Technical content -> Fira Code */
+code, kbd, pre, samp { font-family:'Fira Code', ui-monospace, monospace !important; }
+code { color:var(--accent) !important; }
 
 /* Captions read as technical labels: mono, muted */
-[data-testid="stCaptionContainer"] { font-family:'Ubuntu Mono', monospace; color:var(--ts); }
+[data-testid="stCaptionContainer"] { font-family:'Fira Code', monospace; color:var(--ts); }
 
 /* --- Keyframes --- */
 @keyframes fadeUp { from { opacity:0; transform: translateY(6px); } to { opacity:1; transform:none; } }
@@ -97,48 +114,65 @@ code, kbd, pre, samp { font-family:'Ubuntu Mono', ui-monospace, monospace !impor
 [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(3) { animation-delay: 120ms; }
 [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(4) { animation-delay: 180ms; }
 
-/* Metric: card on a lighter surface; label uppercase tracked mono */
+/* Metric: glassy card with a top accent hairline; label uppercase tracked mono */
 [data-testid="stMetric"] {
-  background:var(--s1); border:1px solid var(--b1); border-radius:10px; padding:14px 18px;
+  position:relative; background:linear-gradient(180deg, var(--s1), var(--s2));
+  border:1px solid var(--b1); border-radius:12px; padding:14px 18px; overflow:hidden;
   transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease),
               border-color var(--d) var(--ease);
 }
+[data-testid="stMetric"]::before {
+  content:""; position:absolute; top:0; left:0; right:0; height:2px;
+  background:linear-gradient(90deg, var(--accent), var(--accent-2)); opacity:0.85;
+}
 [data-testid="stMetricLabel"] {
-  font-family:'Ubuntu Mono', monospace !important;
+  font-family:'Fira Code', monospace !important;
   text-transform:uppercase; letter-spacing:0.12em; color:var(--ts) !important;
 }
-[data-testid="stMetricValue"] { font-weight:500; letter-spacing:-0.02em; color:var(--tp); }
+[data-testid="stMetricValue"] {
+  font-family:'Fira Code', monospace; font-weight:600; letter-spacing:-0.01em;
+  color:var(--accent); text-shadow: 0 0 14px rgba(52,211,153,0.30);
+}
 
 /* Charts sit on cards (layered depth) — style the WRAPPER, never the .js-plotly-plot
    div itself (that breaks Plotly's size calculation) */
 [data-testid="element-container"]:has(.js-plotly-plot) {
-  background:var(--s1); border:1px solid var(--b1); border-radius:12px; padding:8px 8px 4px;
-  transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease);
+  background:var(--s1); border:1px solid var(--b1); border-radius:14px; padding:8px 8px 4px;
+  box-shadow: var(--shadow);
+  transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease),
+              border-color var(--d) var(--ease);
 }
 
-/* Buttons -> pill + lively press/hover. transform/opacity only. */
+/* Buttons -> crisp emerging-tech chip + lively press/hover. transform/opacity only. */
 .stButton > button, .stDownloadButton > button {
-  border-radius:9999px !important; font-weight:500;
+  border-radius:8px !important; font-family:'Fira Code', monospace; font-weight:500;
+  letter-spacing:0.02em;
   transition: transform var(--d) var(--ease-out), box-shadow var(--d) var(--ease),
               border-color var(--d) var(--ease), background-color var(--d) var(--ease);
 }
 .stButton > button:active, .stDownloadButton > button:active { transform: scale(0.96); }
+/* Primary CTA glows */
+.stButton > button[kind="primary"] {
+  box-shadow: 0 0 0 1px var(--accent-bd), 0 0 18px rgba(52,211,153,0.30);
+}
 
 /* Focus-visible accent ring */
 .stButton > button:focus-visible, .stDownloadButton > button:focus-visible,
 input:focus-visible, textarea:focus-visible, [data-baseweb="tab"]:focus-visible {
-  outline:none; box-shadow: 0 0 0 3px rgba(0,161,155,0.22);
+  outline:none; box-shadow: 0 0 0 3px rgba(52,211,153,0.30);
 }
 
-/* Tabs: animated, accent on the selected tab */
+/* Tabs: animated, glowing accent on the selected tab */
 [data-baseweb="tab-list"] { gap:4px; border-bottom:1px solid var(--b1); }
 [data-baseweb="tab"] {
-  font-family:'Ubuntu', sans-serif;
+  font-family:'Fira Code', monospace;
   transition: color var(--d) var(--ease), background-color var(--d) var(--ease),
-              transform var(--d-fast) var(--ease-out);
-  border-radius:9999px 9999px 0 0;
+              box-shadow var(--d) var(--ease), transform var(--d-fast) var(--ease-out);
+  border-radius:8px 8px 0 0;
 }
-button[aria-selected="true"][data-baseweb="tab"] { color:var(--accent) !important; }
+button[aria-selected="true"][data-baseweb="tab"] {
+  color:var(--accent) !important; box-shadow: inset 0 -2px 0 0 var(--accent), 0 6px 16px -8px var(--accent-bd);
+}
 
 /* Dataframes / tables / expander as cards */
 [data-testid="stDataFrame"], [data-testid="stTable"] {
@@ -163,10 +197,11 @@ a:hover { opacity:0.78; }
 /* Hover affordances only on real hover-capable pointers (no touch false-positives) */
 @media (hover: hover) and (pointer: fine) {
   .stButton > button:hover, .stDownloadButton > button:hover {
-    transform: translateY(-1px) scale(1.02); box-shadow: var(--shadow); border-color:var(--accent-bd) !important;
+    transform: translateY(-1px) scale(1.02); box-shadow: var(--shadow), 0 0 16px rgba(52,211,153,0.25);
+    border-color:var(--accent-bd) !important;
   }
-  [data-testid="stMetric"]:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color:var(--b2); }
-  [data-testid="element-container"]:has(.js-plotly-plot):hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+  [data-testid="stMetric"]:hover { transform: translateY(-3px); box-shadow: var(--shadow-glow); border-color:var(--accent-bd); }
+  [data-testid="element-container"]:has(.js-plotly-plot):hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color:var(--b2); }
   [data-testid="stExpander"]:hover { box-shadow: var(--shadow); border-color:var(--b2); }
   [data-baseweb="tab"]:hover { color:var(--accent) !important; transform: translateY(-1px); }
 }
@@ -263,10 +298,11 @@ def hex_preview(raw: bytes, n: int = 48) -> str:
     return raw[:n].hex(" ") + (" ..." if len(raw) > n else "")
 
 
-# --- Plotly theming (design signature) -------------------------------------------
-# Consistent series colours across every chart: TEAL = HE/CKKS, GRAY = AES/plaintext
+# --- Plotly theming (emerging-tech, dark) ----------------------------------------
+# Consistent series colours across every chart: EMERALD = HE/CKKS, GRAY = AES/plaintext
 # baseline; CORAL/AMBER for additional series. The reader learns the mapping once.
-PALETTE = ["#00A19B", "#D85A30", "#EF9F27", "#888780"]
+# (Kept the TEAL name as an alias so downstream chart code is untouched.)
+PALETTE = ["#34D399", "#FB7185", "#FBBF24", "#64748B"]
 TEAL, CORAL, AMBER, GRAY = PALETTE
 
 
@@ -276,20 +312,21 @@ PLOTLY_CFG = {"displayModeBar": False}
 
 
 def _style_fig(fig, ylog=False):
-    """Apply the light warm-sand design signature to a Plotly figure (no in-figure title)."""
+    """Apply the dark emerging-tech style to a Plotly figure (no in-figure title)."""
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Ubuntu, sans-serif", color="#1a1814", size=13),
+        font=dict(family="Fira Sans, sans-serif", color="#F8FAFC", size=13),
         margin=dict(l=55, r=20, t=44, b=44),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
-                    bgcolor="rgba(0,0,0,0)"),
+                    bgcolor="rgba(0,0,0,0)", font=dict(color="#CBD5E1")),
         colorway=PALETTE,
-        hoverlabel=dict(font=dict(family="Ubuntu, sans-serif")),
+        hoverlabel=dict(bgcolor="#1E293B", bordercolor="#3B4C6B",
+                        font=dict(family="Fira Code, monospace", color="#F8FAFC")),
         transition=dict(duration=400, easing="cubic-in-out"),
     )
-    axis = dict(gridcolor="#D4CCC0", zerolinecolor="#D4CCC0", linecolor="#5c574e",
-                tickcolor="#5c574e", tickfont=dict(color="#5c574e"),
-                title_font=dict(color="#5c574e"))
+    axis = dict(gridcolor="#22304A", zerolinecolor="#22304A", linecolor="#475569",
+                tickcolor="#475569", tickfont=dict(color="#94A3B8"),
+                title_font=dict(color="#94A3B8"))
     fig.update_xaxes(**axis)
     fig.update_yaxes(**axis)
     if ylog:
@@ -434,7 +471,7 @@ with tab_dash:
                         hovertemplate="N=%{x}<br>%{y:.1f} ms<extra>HE steady-state</extra>")
             fig.add_bar(x=head["size"].astype(str), y=head.he_oneshot_ms,
                         name="HE one-shot — + CKKS encryption of the dataset",
-                        marker_color="#66C5C0",
+                        marker_color="#6EE7B7",
                         hovertemplate="N=%{x}<br>%{y:.1f} ms<extra>HE one-shot</extra>")
             fig.add_bar(x=head["size"].astype(str), y=head.aes_ms,
                         name="AES — decrypt + compute (plaintext EXPOSED)", marker_color=GRAY,
@@ -558,7 +595,7 @@ with tab_dash:
                     top = max(lv["mean_rel_error"] for lv in ok) * 4
                     fig.add_bar(x=[f"depth {failed['depth']} ({failed['expr']})"], y=[top],
                                 name=f"depth {failed['depth']}: FAILS (chain exhausted)",
-                                marker=dict(color="rgba(216,90,48,0.15)",
+                                marker=dict(color="rgba(251,113,133,0.15)",
                                             line=dict(color=CORAL, width=2),
                                             pattern=dict(shape="/", fgcolor=CORAL)))
                 fig.update_yaxes(title="mean relative error (log scale)")
@@ -618,7 +655,7 @@ with tab_dash:
             if not cks.empty:
                 labels.append("CKKS compute<br>(sum on ciphertext)")
                 vals.append(cks.iloc[0].compute_time_mean * 1e3)
-                colors.append("#66C5C0")
+                colors.append("#6EE7B7")
             a = df[(df.scheme == "AES-256-GCM") & (df.dataset_size == size)]
             if not a.empty:
                 r = a.iloc[0]

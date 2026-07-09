@@ -35,7 +35,7 @@ memory, ciphertext size, and correctness — and when is that overhead acceptabl
 | Tests | pytest | 8.2.2 | Correctness, security, app smoke tests |
 | UI | **Streamlit** | 1.37.1 | Interactive dashboard, live demo, use case |
 | Runtime | **Docker** (`python:3.11-slim`) + docker-compose | — | Full reproducibility; `results/` and `figures/` bind-mounted to host |
-| Design | Ubuntu / Ubuntu Mono fonts; injected CSS | — | Light warm-sand "design signature" + crisp motion |
+| Design | Fira Code / Fira Sans fonts; injected CSS | — | Dark "emerging-tech" (OLED) style — deep-slate canvas, emerald accent, glow + crisp motion |
 
 ---
 
@@ -200,8 +200,9 @@ approximate-decryption leakage caveat (Li–Micciancio 2021), mitigated by noise
    HE doesn't" workflow comparison.
 
 The app reuses the exact same `he_benchmark` modules as the benchmark, so live results match
-the measured pipeline. Charts are themed Plotly figures. It is styled with a light warm-sand
-"design signature" (Ubuntu/Ubuntu Mono, pill buttons, layered surfaces) and an
+the measured pipeline. Charts are themed Plotly figures. It is styled with a dark
+"emerging-tech" (OLED) look (Fira Code/Fira Sans, deep-slate canvas with a faint grid +
+emerald/cyan glow, electric-emerald accent, glassy layered surfaces, minimal glow) and an
 accessibility-aware CSS motion layer (staggered card/chart entrance, hover lift, press
 feedback, focus rings, reduced-motion support).
 
